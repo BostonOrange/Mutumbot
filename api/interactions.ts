@@ -56,7 +56,7 @@ export default async function handler(
 
   // Handle Application Commands (slash commands)
   if (interaction.type === InteractionType.APPLICATION_COMMAND) {
-    const response = handleApplicationCommand(interaction);
+    const response = await handleApplicationCommand(interaction);
     res.status(200).json(response);
     return;
   }
@@ -68,7 +68,7 @@ export default async function handler(
 /**
  * Route application commands to their handlers
  */
-function handleApplicationCommand(interaction: DiscordInteraction): InteractionResponse {
+async function handleApplicationCommand(interaction: DiscordInteraction): Promise<InteractionResponse> {
   const commandName = interaction.data?.name;
   const options = interaction.data?.options || [];
   const userId = interaction.member?.user?.id || interaction.user?.id || 'unknown';
@@ -103,7 +103,7 @@ function handleApplicationCommand(interaction: DiscordInteraction): InteractionR
       if (subcommand === 'ask') {
         const questionOption = options[0]?.options?.find(opt => opt.name === 'question');
         const question = (questionOption?.value as string) || '';
-        const result = handleDrinkQuestion(question);
+        const result = await handleDrinkQuestion(question);
 
         return {
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -112,7 +112,7 @@ function handleApplicationCommand(interaction: DiscordInteraction): InteractionR
       }
 
       if (subcommand === 'random') {
-        const result = handleRandomDrinkFact();
+        const result = await handleRandomDrinkFact();
         return {
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
           data: result,
