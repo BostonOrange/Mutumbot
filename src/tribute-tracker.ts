@@ -26,7 +26,7 @@ import {
 // Weekly Friday posts (keyed by Friday date)
 const fridayPosts: Map<string, TributePost[]> = new Map();
 
-// All-time tribute count per user
+// All-time tribute count per user (public channel tributes only)
 const allTimeTally: Map<string, number> = new Map();
 
 // Today's tribute count per user (keyed by date)
@@ -34,6 +34,9 @@ const dailyTally: Map<string, Map<string, number>> = new Map();
 
 // Friday-specific tribute count per user (only counts Friday tributes)
 const fridayTally: Map<string, number> = new Map();
+
+// Private devotion tally (DM tributes - separate from competitive leaderboard)
+const privateDevotionTally: Map<string, number> = new Map();
 
 // ============ DATE HELPERS ============
 
@@ -67,11 +70,13 @@ export function isFriday(): boolean {
 
 /**
  * Record a tribute and update all tallies
- * DM tributes (guildId === 'dm') are NOT counted toward competitive tallies
+ * DM tributes (guildId === 'dm') go to private devotion tally (not competitive)
  */
 export function recordTributePost(post: TributePost): void {
-  // Don't count DM tributes toward competitive tallies
+  // DM tributes go to private devotion tally only
   if (post.guildId === 'dm') {
+    const currentPrivate = privateDevotionTally.get(post.userId) || 0;
+    privateDevotionTally.set(post.userId, currentPrivate + 1);
     return;
   }
 
@@ -116,6 +121,10 @@ export function getDailyTribute(userId: string): number {
 
 export function getFridayTribute(userId: string): number {
   return fridayTally.get(userId) || 0;
+}
+
+export function getPrivateDevotion(userId: string): number {
+  return privateDevotionTally.get(userId) || 0;
 }
 
 // ============ LEADERBOARDS ============

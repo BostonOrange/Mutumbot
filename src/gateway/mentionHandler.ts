@@ -14,6 +14,8 @@ import {
   getAllTimeTribute,
   getDailyTribute,
   getFridayTribute,
+  getPrivateDevotion,
+  recordTributePost,
 } from '../tribute-tracker';
 import { ISEE_EMOJI } from '../personality';
 import { addToContext } from '../services/conversationContext';
@@ -49,9 +51,19 @@ export async function handleMentionMessage(message: Message): Promise<void> {
       addToContext(channelId, 'model', `[I observed this image: ${imageDescription}]`);
     }
 
-    // DM tributes get a different response (don't count toward tally)
+    // DM tributes go to private devotion tally (separate from competitive leaderboard)
     if (isDM) {
-      // Get their public tribute counts (from channel tributes, not DMs)
+      // Record the DM tribute to private devotion
+      recordTributePost({
+        userId,
+        username,
+        timestamp: new Date().toISOString(),
+        imageUrl: imageAttachment.url,
+        guildId: 'dm',
+      });
+
+      // Get all their counts
+      const privateDevotion = getPrivateDevotion(userId);
       const publicAllTime = getAllTimeTribute(userId);
       const publicFriday = getFridayTribute(userId);
 
@@ -61,13 +73,12 @@ export async function handleMentionMessage(message: Message): Promise<void> {
         dmResponse += ` ${imageDescription}`;
       }
 
-      dmResponse += `\n\nThe spirits acknowledge your devotion.\n\n*Note: DM tributes are between you and the gods alone - they do not count toward the public leaderboard. Tribute in the sacred channels to compete with other mortals!*`;
+      dmResponse += `\n\nThe spirits acknowledge your devotion.`;
+      dmResponse += `\n*Private devotion: ${privateDevotion} | Public tributes: ${publicAllTime}*`;
+      dmResponse += `\n\n*DM tributes are between you and the gods alone - they do not count toward the public leaderboard. Tribute in the sacred channels to compete with other mortals!*`;
 
-      // Add their public tribute count info to context so AI can answer follow-up questions
-      const tributeInfo = publicAllTime > 0
-        ? `[This user has ${publicAllTime} public channel tribute(s) recorded (${publicFriday} on Fridays). DM tributes do not count toward the tally.]`
-        : `[This user has no public channel tributes recorded yet. DM tributes do not count toward the tally - they must tribute in a server channel to be counted.]`;
-      addToContext(channelId, 'model', tributeInfo);
+      // Add their tribute count info to context so AI can answer follow-up questions
+      addToContext(channelId, 'model', `[${username}'s tribute counts - Private devotion (DMs): ${privateDevotion}, Public channel tributes: ${publicAllTime} (${publicFriday} on Fridays). DM tributes are tracked separately and don't count toward the competitive leaderboard.]`);
 
       await message.reply(dmResponse);
       return;
