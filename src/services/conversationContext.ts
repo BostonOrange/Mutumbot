@@ -87,14 +87,30 @@ export function getActiveContextCount(): number {
 
 /**
  * Format context for Gemini AI chat history
+ * Merges consecutive messages with the same role since Gemini requires
+ * alternating user/model turns
  */
 export function formatContextForAI(
   channelId: string
 ): Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> {
   const context = getContext(channelId);
 
-  return context.map(msg => ({
-    role: msg.role,
-    parts: [{ text: msg.text }],
-  }));
+  // Merge consecutive messages with the same role
+  const merged: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+
+  for (const msg of context) {
+    const lastMsg = merged[merged.length - 1];
+    if (lastMsg && lastMsg.role === msg.role) {
+      // Append to existing message with same role
+      lastMsg.parts[0].text += '\n' + msg.text;
+    } else {
+      // Add new message
+      merged.push({
+        role: msg.role,
+        parts: [{ text: msg.text }],
+      });
+    }
+  }
+
+  return merged;
 }
