@@ -62,6 +62,7 @@ export async function handleMentionMessage(message: Message): Promise<void> {
     // DM tributes go to private devotion tally (separate from competitive leaderboard)
     if (isDM) {
       const score = imageAnalysis?.score || TRIBUTE_SCORES.OTHER;
+      const category = imageAnalysis?.category || 'OTHER';
 
       // Record the DM tribute to private devotion
       recordTributePost({
@@ -72,7 +73,7 @@ export async function handleMentionMessage(message: Message): Promise<void> {
         guildId: 'dm',
       }, score);
 
-      // Get all their stats
+      // Get all their stats (for AI context, not display)
       const privateStats = getPrivateDevotionStats(userId);
       const publicStats = getFullUserStats(userId);
 
@@ -80,16 +81,23 @@ export async function handleMentionMessage(message: Message): Promise<void> {
 
       if (imageAnalysis) {
         dmResponse += ` ${imageAnalysis.description}`;
-        const categoryLabel = CATEGORY_LABELS[imageAnalysis.category] || imageAnalysis.category;
-        dmResponse += `\n\n**+${score}pts** (${categoryLabel}${imageAnalysis.drinkName ? `: ${imageAnalysis.drinkName}` : ''})`;
       }
 
-      dmResponse += `\n\nThe spirits acknowledge your devotion.`;
-      dmResponse += `\n*Private devotion: ${privateStats.score}pts (${privateStats.count} tributes) | Public: ${publicStats.allTime.score}pts*`;
-      dmResponse += `\n\n*DM tributes are between you and the gods alone - they do not count toward the public leaderboard. Tribute in the sacred channels to compete with other mortals!*`;
+      // In-character responses based on category
+      if (category === 'TIKI') {
+        dmResponse += `\n\nA SACRED TIKI VESSEL in the shadows! The spirits are GREATLY pleased by this private communion.`;
+      } else if (category === 'COCKTAIL') {
+        dmResponse += `\n\nThe spirits acknowledge your crafted libation... though they HUNGER for the sacred tiki arts.`;
+      } else if (category === 'BEER_WINE') {
+        dmResponse += `\n\nA humble offering... The spirits accept it, though they dream of GREATER things.`;
+      } else {
+        dmResponse += `\n\nAn... unconventional offering. The spirits are CURIOUS.`;
+      }
 
-      // Add comprehensive stats to context for AI
-      addToContext(channelId, 'model', `[${username}'s stats - Private devotion: ${privateStats.score}pts from ${privateStats.count} DM tributes. Public channel: ${publicStats.allTime.score}pts from ${publicStats.allTime.count} tributes (${publicStats.friday.score}pts on Fridays). Scoring: Tiki=10pts, Cocktail=5pts, Beer/Wine=2pts, Other=1pt. DM tributes don't count toward public leaderboard.]`);
+      dmResponse += `\n\n*These whispers between us remain in the shadows - seek the sacred channels if you wish to be counted among the devoted.*`;
+
+      // Add comprehensive stats to context for AI (user can ask for stats)
+      addToContext(channelId, 'model', `[${username}'s stats - Private devotion: ${privateStats.score}pts from ${privateStats.count} DM tributes. Public channel: ${publicStats.allTime.score}pts from ${publicStats.allTime.count} tributes (${publicStats.friday.score}pts on Fridays). Scoring: Tiki=10pts, Cocktail=5pts, Beer/Wine=2pts, Other=1pt. DM tributes don't count toward public leaderboard. User can ask "what's my score" or "how many tributes" to get their stats.]`);
 
       await message.reply(dmResponse);
       return;

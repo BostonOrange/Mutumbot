@@ -432,13 +432,31 @@ export function handleTributeCommand(
   }
 }
 
-// Category labels for display
-const CATEGORY_LABELS: Record<string, string> = {
-  TIKI: '🗿 TIKI',
-  COCKTAIL: '🍸 Cocktail',
-  BEER_WINE: '🍺 Beer/Wine',
-  OTHER: '📦 Other',
-};
+// In-character follow-up phrases by category
+const TIKI_FOLLOWUPS = [
+  `The ancient ones REJOICE at this sacred vessel!`,
+  `A TRUE offering to the tiki spirits!`,
+  `The SACRED ARTS have been honored!`,
+  `YESSS... This pleases the ancient ones GREATLY.`,
+];
+
+const COCKTAIL_FOLLOWUPS = [
+  `A worthy libation... though the spirits dream of TIKI.`,
+  `The craft is acknowledged. The spirits nod in approval.`,
+  `Not the sacred tiki arts, but the spirits accept your offering.`,
+];
+
+const BEER_WINE_FOLLOWUPS = [
+  `A humble offering... but the spirits see your devotion.`,
+  `The common elixirs are... acceptable.`,
+  `Simple, yet the spirits recognize the intent.`,
+];
+
+const OTHER_FOLLOWUPS = [
+  `An... unusual tribute. The spirits are INTRIGUED.`,
+  `The spirits tilt their heads in CURIOSITY.`,
+  `Unconventional... but devotion takes many forms.`,
+];
 
 /**
  * Handle a tribute via @mention with image attachment
@@ -463,45 +481,38 @@ export function handleMentionTribute(
   }, score);
 
   const allTimeS = getAllTimeStats(userId);
-  const dailyS = getDailyStats(userId);
-  const fridayS = getFridayStats(userId);
   const isSpecialDay = isFriday();
 
-  let response: string;
-
-  // Response varies by category
-  if (category === 'TIKI') {
-    response = getRandomPhrase(TIKI_TRIBUTE_PHRASES);
-  } else if (category === 'COCKTAIL') {
-    response = getRandomPhrase(TRIBUTE_RECEIVED_PHRASES);
-  } else {
-    response = getRandomPhrase(NON_FRIDAY_TRIBUTE_PHRASES);
-  }
+  let response = `${ISEE_EMOJI} I SEE your offering, **${username}**...`;
 
   // Add what Mutumbot SAW in the image
   if (imageAnalysis?.description) {
     response += ` ${imageAnalysis.description}`;
   }
 
-  // Show the score earned
-  const categoryLabel = CATEGORY_LABELS[category] || category;
-  response += `\n\n**+${score}pts** (${categoryLabel}${imageAnalysis?.drinkName ? `: ${imageAnalysis.drinkName}` : ''})`;
-
-  if (isSpecialDay) {
-    response += `\n**${username}** honors the SACRED FRIDAY RITUAL!`;
-    response += `\n*Today: ${dailyS.score}pts | Fridays: ${fridayS.score}pts | All-time: ${allTimeS.score}pts (${allTimeS.count} tributes)*`;
+  // In-character response based on category
+  if (category === 'TIKI') {
+    response += `\n\n${getRandomPhrase(TIKI_FOLLOWUPS)}`;
+  } else if (category === 'COCKTAIL') {
+    response += `\n\n${getRandomPhrase(COCKTAIL_FOLLOWUPS)}`;
+  } else if (category === 'BEER_WINE') {
+    response += `\n\n${getRandomPhrase(BEER_WINE_FOLLOWUPS)}`;
   } else {
-    response += `\n**${username}**'s tribute has been recorded.`;
-    response += `\n*Today: ${dailyS.score}pts | All-time: ${allTimeS.score}pts (${allTimeS.count} tributes)*`;
+    response += `\n\n${getRandomPhrase(OTHER_FOLLOWUPS)}`;
   }
 
-  // Maybe add random praise/condemnation
+  // Friday gets special mention
+  if (isSpecialDay) {
+    response += ` The SACRED FRIDAY RITUAL has been honored!`;
+  }
+
+  // Maybe add random praise/condemnation of other users
   const randomComment = maybeGetRandomComment();
   if (randomComment) {
     response += `\n\n${randomComment}`;
   }
 
-  // Milestone messages (based on score now)
+  // Milestone messages (based on score)
   response += getScoreMilestoneMessage(allTimeS.score);
 
   return { content: response };

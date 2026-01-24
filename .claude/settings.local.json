@@ -4,7 +4,11 @@
       "Bash(dir:*)",
       "Bash(tree /f \"C:\\\\Developer\\\\mutumbot\")",
       "Bash(npm install:*)",
-      "Bash(npm ls:*)"
+      "Bash(npm ls:*)",
+      "Bash(npm.cmd run gateway:build:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }
