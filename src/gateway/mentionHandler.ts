@@ -42,10 +42,14 @@ export async function handleMentionMessage(message: Message): Promise<void> {
     att.contentType?.startsWith('image/')
   );
 
+  // Check if today is Friday
+  const isSpecialDay = new Date().getDay() === 5;
+
   // If there's an image, treat as a tribute (any day!)
   if (imageAttachment) {
     // Analyze the image so Mutumbot actually SEES and JUDGES it
-    const imageAnalysis = await analyzeImage(imageAttachment.url, message.content);
+    // Pass context so AI can generate appropriate response
+    const imageAnalysis = await analyzeImage(imageAttachment.url, message.content, isSpecialDay, isDM);
 
     // Store the user's message and image analysis in context for follow-up questions
     const userContextMessage = message.content
@@ -62,7 +66,6 @@ export async function handleMentionMessage(message: Message): Promise<void> {
     // DM tributes go to private devotion tally (separate from competitive leaderboard)
     if (isDM) {
       const score = imageAnalysis?.score || TRIBUTE_SCORES.OTHER;
-      const category = imageAnalysis?.category || 'OTHER';
 
       // Record the DM tribute to private devotion
       recordTributePost({
@@ -77,24 +80,13 @@ export async function handleMentionMessage(message: Message): Promise<void> {
       const privateStats = getPrivateDevotionStats(userId);
       const publicStats = getFullUserStats(userId);
 
-      let dmResponse = `${ISEE_EMOJI} I SEE your private offering, **${username}**...`;
-
-      if (imageAnalysis) {
-        dmResponse += ` ${imageAnalysis.description}`;
-      }
-
-      // In-character responses based on category
-      if (category === 'TIKI') {
-        dmResponse += `\n\nA SACRED TIKI VESSEL in the shadows! The spirits are GREATLY pleased by this private communion.`;
-      } else if (category === 'COCKTAIL') {
-        dmResponse += `\n\nThe spirits acknowledge your crafted libation... though they HUNGER for the sacred tiki arts.`;
-      } else if (category === 'BEER_WINE') {
-        dmResponse += `\n\nA humble offering... The spirits accept it, though they dream of GREATER things.`;
+      // Use AI-generated response if available, otherwise fallback
+      let dmResponse: string;
+      if (imageAnalysis?.response) {
+        dmResponse = `${ISEE_EMOJI} ${imageAnalysis.response}`;
       } else {
-        dmResponse += `\n\nAn... unconventional offering. The spirits are CURIOUS.`;
+        dmResponse = `${ISEE_EMOJI} I SEE your private offering, **${username}**... The spirits acknowledge your devotion.`;
       }
-
-      dmResponse += `\n\n*These whispers between us remain in the shadows - seek the sacred channels if you wish to be counted among the devoted.*`;
 
       // Add comprehensive stats to context for AI (user can ask for stats)
       addToContext(channelId, 'model', `[${username}'s stats - Private devotion: ${privateStats.score}pts from ${privateStats.count} DM tributes. Public channel: ${publicStats.allTime.score}pts from ${publicStats.allTime.count} tributes (${publicStats.friday.score}pts on Fridays). Scoring: Tiki=10pts, Cocktail=5pts, Beer/Wine=2pts, Other=1pt. DM tributes don't count toward public leaderboard. User can ask "what's my score" or "how many tributes" to get their stats.]`);

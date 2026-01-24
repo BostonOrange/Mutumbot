@@ -34,15 +34,18 @@ export interface ImageAnalysis {
   category: DrinkCategory;
   score: number;
   drinkName?: string;
+  response?: string;  // AI-generated in-character response
 }
 
 /**
- * Analyze an image and return description + scoring
+ * Analyze an image and generate a full AI response for the tribute
  * Used when receiving tribute images so Mutumbot can actually SEE and JUDGE them
  */
 export async function analyzeImage(
   imageUrl: string,
-  userMessage?: string
+  userMessage?: string,
+  isFriday?: boolean,
+  isDM?: boolean
 ): Promise<ImageAnalysis | null> {
   if (!GOOGLE_AI_API_KEY) {
     return null;
@@ -65,23 +68,36 @@ export async function analyzeImage(
     const genAI = new GoogleGenerativeAI(GOOGLE_AI_API_KEY);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
 
-    const prompt = `You are MUTUMBOT, an ancient tiki entity receiving a tribute image.
+    const prompt = `You are MUTUMBOT, an ancient and ominous tiki entity receiving a tribute offering.
 
 Analyze this image and respond in EXACTLY this JSON format (no markdown, just raw JSON):
 {
-  "description": "1-2 sentence description of what you see",
+  "description": "What you SEE in the image - be specific about the drink, vessel, garnishes, setting",
   "category": "TIKI" or "COCKTAIL" or "BEER_WINE" or "OTHER",
-  "drinkName": "name of the drink if identifiable, or null"
+  "drinkName": "name of the drink if identifiable, or null",
+  "response": "Your full in-character response as MUTUMBOT (2-3 sentences)"
 }
 
-CATEGORY RULES:
-- TIKI: Tiki drinks (Mai Tai, Zombie, Painkiller, Hurricane, Scorpion, Navy Grog, Jungle Bird, etc.), drinks in tiki mugs, tropical cocktails with rum and exotic garnishes
-- COCKTAIL: Other mixed drinks, cocktails, spirits (margarita, martini, old fashioned, whiskey sour, etc.)
-- BEER_WINE: Beer, wine, cider, hard seltzer, simple drinks
-- OTHER: Non-alcoholic drinks, food, or anything that's not a beverage
+CATEGORY RULES (for scoring):
+- TIKI (10pts): Tiki drinks (Mai Tai, Zombie, Painkiller, Hurricane, Scorpion, Navy Grog, Jungle Bird, etc.), drinks in tiki mugs, tropical cocktails with rum and exotic garnishes
+- COCKTAIL (5pts): Other mixed drinks, cocktails, spirits (margarita, martini, old fashioned, whiskey sour, etc.)
+- BEER_WINE (2pts): Beer, wine, cider, hard seltzer, simple drinks
+- OTHER (1pt): Non-alcoholic drinks, food, or anything that's not a beverage
 
-Be specific in your description. Focus on the drink, vessel, and garnishes.
-${userMessage ? `The mortal who sent this said: "${userMessage}"` : ''}`;
+RESPONSE GUIDELINES:
+- Stay in character as an ancient, ominous tiki entity
+- Use dramatic CAPS for emphasis on key words
+- Reference "the spirits", "the ancient ones", "the tiki gods"
+- React appropriately to what you see:
+  - TIKI drinks: Express GREAT pleasure, the sacred arts are honored
+  - Cocktails: Acknowledge the craft, but hint you prefer tiki
+  - Beer/Wine: Accept humbly, suggest they could do better
+  - Other: Be curious or mildly disappointed
+${isFriday ? '- This is FRIDAY - the sacred ritual day! Mention this.' : ''}
+${isDM ? '- This is a private DM tribute - these remain between you and the mortal, separate from the public competition.' : ''}
+${userMessage ? `- The mortal who sent this said: "${userMessage}"` : ''}
+
+Keep your response mysterious and theatrical but not too long.`;
 
     const result = await model.generateContent([
       {
@@ -107,6 +123,7 @@ ${userMessage ? `The mortal who sent this said: "${userMessage}"` : ''}`;
         category,
         score: TRIBUTE_SCORES[category],
         drinkName: parsed.drinkName || undefined,
+        response: parsed.response || undefined,
       };
     } catch {
       // If JSON parsing fails, fall back to basic response

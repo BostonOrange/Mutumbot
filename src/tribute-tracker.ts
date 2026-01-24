@@ -432,32 +432,6 @@ export function handleTributeCommand(
   }
 }
 
-// In-character follow-up phrases by category
-const TIKI_FOLLOWUPS = [
-  `The ancient ones REJOICE at this sacred vessel!`,
-  `A TRUE offering to the tiki spirits!`,
-  `The SACRED ARTS have been honored!`,
-  `YESSS... This pleases the ancient ones GREATLY.`,
-];
-
-const COCKTAIL_FOLLOWUPS = [
-  `A worthy libation... though the spirits dream of TIKI.`,
-  `The craft is acknowledged. The spirits nod in approval.`,
-  `Not the sacred tiki arts, but the spirits accept your offering.`,
-];
-
-const BEER_WINE_FOLLOWUPS = [
-  `A humble offering... but the spirits see your devotion.`,
-  `The common elixirs are... acceptable.`,
-  `Simple, yet the spirits recognize the intent.`,
-];
-
-const OTHER_FOLLOWUPS = [
-  `An... unusual tribute. The spirits are INTRIGUED.`,
-  `The spirits tilt their heads in CURIOSITY.`,
-  `Unconventional... but devotion takes many forms.`,
-];
-
 /**
  * Handle a tribute via @mention with image attachment
  */
@@ -467,10 +441,9 @@ export function handleMentionTribute(
   guildId: string,
   imageUrl: string,
   messageContent?: string,
-  imageAnalysis?: { description: string; category: string; score: number; drinkName?: string }
+  imageAnalysis?: { description: string; category: string; score: number; drinkName?: string; response?: string }
 ): { content: string } {
   const score = imageAnalysis?.score || 1;
-  const category = imageAnalysis?.category || 'OTHER';
 
   recordTributePost({
     userId,
@@ -481,29 +454,13 @@ export function handleMentionTribute(
   }, score);
 
   const allTimeS = getAllTimeStats(userId);
-  const isSpecialDay = isFriday();
 
-  let response = `${ISEE_EMOJI} I SEE your offering, **${username}**...`;
-
-  // Add what Mutumbot SAW in the image
-  if (imageAnalysis?.description) {
-    response += ` ${imageAnalysis.description}`;
-  }
-
-  // In-character response based on category
-  if (category === 'TIKI') {
-    response += `\n\n${getRandomPhrase(TIKI_FOLLOWUPS)}`;
-  } else if (category === 'COCKTAIL') {
-    response += `\n\n${getRandomPhrase(COCKTAIL_FOLLOWUPS)}`;
-  } else if (category === 'BEER_WINE') {
-    response += `\n\n${getRandomPhrase(BEER_WINE_FOLLOWUPS)}`;
+  // Use AI-generated response if available, otherwise fallback
+  let response: string;
+  if (imageAnalysis?.response) {
+    response = `${ISEE_EMOJI} ${imageAnalysis.response}`;
   } else {
-    response += `\n\n${getRandomPhrase(OTHER_FOLLOWUPS)}`;
-  }
-
-  // Friday gets special mention
-  if (isSpecialDay) {
-    response += ` The SACRED FRIDAY RITUAL has been honored!`;
+    response = `${ISEE_EMOJI} I SEE your offering, **${username}**... The spirits acknowledge your tribute.`;
   }
 
   // Maybe add random praise/condemnation of other users
