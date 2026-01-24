@@ -4,12 +4,14 @@
  * Handles @Mutumbot mentions in Discord messages.
  * Detects image attachments for tribute offerings (any day!).
  * DM tributes are acknowledged but don't count toward competitive tallies.
+ * Now with VISION - Mutumbot actually SEES the images!
  */
 
 import { Message } from 'discord.js';
-import { handleMention } from '../drink-questions';
+import { handleMention, analyzeImage } from '../drink-questions';
 import { handleMentionTribute } from '../tribute-tracker';
 import { ISEE_EMOJI } from '../personality';
+import { addToContext } from '../services/conversationContext';
 
 /**
  * Handle a message that mentions Mutumbot
@@ -28,11 +30,31 @@ export async function handleMentionMessage(message: Message): Promise<void> {
 
   // If there's an image, treat as a tribute (any day!)
   if (imageAttachment) {
+    // Analyze the image so Mutumbot actually SEES it
+    const imageDescription = await analyzeImage(imageAttachment.url, message.content);
+
+    // Store the user's message and image description in context for follow-up questions
+    const userContextMessage = message.content
+      ? `[Sent an image with message: "${message.content.replace(/<@!?\d+>/g, '').trim()}"]`
+      : '[Sent an image as tribute]';
+    addToContext(channelId, 'user', userContextMessage);
+
+    if (imageDescription) {
+      // Store what Mutumbot saw in context
+      addToContext(channelId, 'model', `[I observed this image: ${imageDescription}]`);
+    }
+
     // DM tributes get a different response (don't count toward tally)
     if (isDM) {
-      await message.reply(
-        `${ISEE_EMOJI} I SEE your private offering, **${username}**... The spirits acknowledge your devotion.\n\n*Note: DM tributes are between you and the gods alone - they do not count toward the public leaderboard. Tribute in the sacred channels to compete with other mortals!*`
-      );
+      let dmResponse = `${ISEE_EMOJI} I SEE your private offering, **${username}**...`;
+
+      if (imageDescription) {
+        dmResponse += ` ${imageDescription}`;
+      }
+
+      dmResponse += `\n\nThe spirits acknowledge your devotion.\n\n*Note: DM tributes are between you and the gods alone - they do not count toward the public leaderboard. Tribute in the sacred channels to compete with other mortals!*`;
+
+      await message.reply(dmResponse);
       return;
     }
 
@@ -41,7 +63,8 @@ export async function handleMentionMessage(message: Message): Promise<void> {
       username,
       guildId,
       imageAttachment.url,
-      message.content
+      message.content,
+      imageDescription || undefined
     );
 
     await message.reply(result.content);

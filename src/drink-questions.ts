@@ -20,6 +20,65 @@ import {
 const GOOGLE_AI_API_KEY = process.env.GOOGLE_AI_API_KEY;
 
 /**
+ * Analyze an image and return a description
+ * Used when receiving tribute images so Mutumbot can actually SEE them
+ */
+export async function analyzeImage(
+  imageUrl: string,
+  userMessage?: string
+): Promise<string | null> {
+  if (!GOOGLE_AI_API_KEY) {
+    return null;
+  }
+
+  try {
+    // Fetch the image from Discord CDN
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+      console.error('Failed to fetch image:', response.status);
+      return null;
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+
+    // Get the mime type from the response
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
+
+    const genAI = new GoogleGenerativeAI(GOOGLE_AI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
+
+    const prompt = `You are MUTUMBOT, an ancient tiki entity receiving a tribute image.
+Describe what you SEE in this image in 1-2 sentences, focusing on:
+- What drink/beverage is shown (if any)
+- The vessel/glass/mug it's in
+- Any notable details (tiki mugs, garnishes, tropical elements)
+- The setting/background if relevant
+
+If it's NOT a drink, describe what you see anyway.
+Be specific about details you observe. Do NOT make up things that aren't visible.
+${userMessage ? `The mortal who sent this said: "${userMessage}"` : ''}
+
+Respond ONLY with your observation, no greeting or persona - that will be added separately.`;
+
+    const result = await model.generateContent([
+      {
+        inlineData: {
+          mimeType: contentType,
+          data: base64,
+        },
+      },
+      { text: prompt },
+    ]);
+
+    return result.response.text().trim();
+  } catch (error) {
+    console.error('Image analysis error:', error);
+    return null;
+  }
+}
+
+/**
  * Handle the /ask command using Google AI with Mutumbot personality
  */
 export async function handleDrinkQuestion(

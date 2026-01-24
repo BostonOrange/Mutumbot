@@ -337,7 +337,8 @@ export function handleMentionTribute(
   username: string,
   guildId: string,
   imageUrl: string,
-  messageContent?: string
+  messageContent?: string,
+  imageDescription?: string
 ): { content: string } {
   recordTributePost({
     userId,
@@ -351,25 +352,39 @@ export function handleMentionTribute(
   const daily = getDailyTribute(userId);
   const fridayCount = getFridayTribute(userId);
   const isTiki = messageContent ? isTikiRelated(messageContent) : false;
+  // Also check if image description mentions tiki elements
+  const isTikiImage = imageDescription ? isTikiRelated(imageDescription) : false;
   const isSpecialDay = isFriday();
 
   let response: string;
 
   if (isSpecialDay) {
     // Friday - extra dramatic!
-    if (isTiki) {
+    if (isTiki || isTikiImage) {
       response = getRandomPhrase(TIKI_TRIBUTE_PHRASES);
     } else {
       response = getRandomPhrase(TRIBUTE_RECEIVED_PHRASES);
     }
+
+    // Add what Mutumbot SAW in the image
+    if (imageDescription) {
+      response += ` ${imageDescription}`;
+    }
+
     response += `\n\n**${username}** honors the SACRED FRIDAY RITUAL!`;
     response += `\n*Today: ${daily} | Fridays: ${fridayCount} | All-time: ${allTime}*`;
   } else {
     // Non-Friday
-    if (isTiki) {
+    if (isTiki || isTikiImage) {
       response = `${ISEE_EMOJI} A TIKI OFFERING outside the sacred Friday? Your devotion runs DEEP, **${username}**...`;
+      if (imageDescription) {
+        response += ` ${imageDescription}`;
+      }
     } else {
       response = getRandomPhrase(NON_FRIDAY_TRIBUTE_PHRASES);
+      if (imageDescription) {
+        response += ` ${imageDescription}`;
+      }
       response += `\n\n**${username}**'s tribute has been recorded.`;
     }
     response += `\n*Today: ${daily} | All-time: ${allTime}*`;
