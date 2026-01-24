@@ -93,6 +93,53 @@ const commands = [
     name: 'cheers',
     description: 'Raise your vessel to the spirits!',
   },
+  {
+    name: 'demand',
+    description: '[Admin] Invoke the spirits to demand tribute',
+    default_member_permissions: '8', // Administrator only
+    options: [
+      {
+        name: 'now',
+        description: 'The spirits demand tribute IMMEDIATELY',
+        type: 1,
+      },
+      {
+        name: 'schedule',
+        description: 'Schedule a tribute demand for a specific time',
+        type: 1,
+        options: [
+          {
+            name: 'date',
+            description: 'Date for the demand (YYYY-MM-DD, e.g., 2024-01-26)',
+            type: 3,
+            required: true,
+          },
+          {
+            name: 'time',
+            description: 'Time for the demand (HH:MM in 24h format, e.g., 15:30)',
+            type: 3,
+            required: true,
+          },
+        ],
+      },
+    ],
+  },
+  {
+    name: 'tally',
+    description: 'View the tribute leaderboard and your standing',
+    options: [
+      {
+        name: 'me',
+        description: 'See your own tribute stats',
+        type: 1,
+      },
+      {
+        name: 'leaderboard',
+        description: 'See the top tribute rankings',
+        type: 1,
+      },
+    ],
+  },
 ];
 
 async function registerCommands() {

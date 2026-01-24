@@ -12,13 +12,22 @@ import {
   InteractionResponseType,
   InteractionResponse,
 } from '../src/types';
-import { handleTributeCommand } from '../src/tribute-tracker';
+import {
+  handleTributeCommand,
+  getFullUserStats,
+  getAllTimeLeaderboard,
+  getDailyLeaderboard,
+  getFridayLeaderboard,
+} from '../src/tribute-tracker';
 import {
   handleDrinkQuestion,
   handleDrinkList,
   handleRandomDrinkFact,
 } from '../src/drink-questions';
-import { ISEE_EMOJI } from '../src/personality';
+import { ISEE_EMOJI, getRandomPhrase, TRIBUTE_DEMAND_PHRASES } from '../src/personality';
+
+// Store scheduled demands (in production, use Redis or similar)
+const scheduledDemands: Map<string, { date: string; time: string; channelId: string }> = new Map();
 
 const DISCORD_PUBLIC_KEY = process.env.DISCORD_PUBLIC_KEY || '';
 
@@ -166,6 +175,135 @@ async function handleApplicationCommand(
       };
     }
 
+    // /demand command - Admin only, trigger tribute demands
+    case 'demand': {
+      const subcommand = options[0]?.name || 'now';
+
+      if (subcommand === 'now') {
+        // Post an immediate demand
+        const demandMessage = getRandomPhrase(TRIBUTE_DEMAND_PHRASES);
+        return {
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: {
+            content: demandMessage,
+          },
+        };
+      }
+
+      if (subcommand === 'schedule') {
+        const dateOption = options[0]?.options?.find(opt => opt.name === 'date');
+        const timeOption = options[0]?.options?.find(opt => opt.name === 'time');
+        const date = dateOption?.value as string;
+        const time = timeOption?.value as string;
+
+        // Validate date format
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          return {
+            type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+            data: {
+              content: `${ISEE_EMOJI} The spirits cannot comprehend this date format. Use YYYY-MM-DD (e.g., 2024-01-26).`,
+            },
+          };
+        }
+
+        // Validate time format
+        if (!/^\d{2}:\d{2}$/.test(time)) {
+          return {
+            type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+            data: {
+              content: `${ISEE_EMOJI} The spirits cannot comprehend this time format. Use HH:MM in 24h format (e.g., 15:30).`,
+            },
+          };
+        }
+
+        // Store the scheduled demand (note: in-memory, won't persist across deploys)
+        const demandId = `${guildId}-${Date.now()}`;
+        scheduledDemands.set(demandId, { date, time, channelId });
+
+        return {
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: {
+            content: `${ISEE_EMOJI} The spirits have MARKED their calendars...\n\n**Tribute demand scheduled for ${date} at ${time}** (Stockholm time).\n\n*Note: Scheduled demands require the gateway bot to be running. For immediate demands, use \`/demand now\`.*`,
+          },
+        };
+      }
+
+      return {
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: {
+          content: `${ISEE_EMOJI} Unknown demand ritual. Use \`/demand now\` or \`/demand schedule\`.`,
+        },
+      };
+    }
+
+    // /tally command - View tribute stats and leaderboard
+    case 'tally': {
+      const subcommand = options[0]?.name || 'me';
+
+      if (subcommand === 'me') {
+        const stats = getFullUserStats(userId);
+        const allTimeBoard = getAllTimeLeaderboard();
+        const rank = allTimeBoard.findIndex(e => e.userId === userId) + 1;
+        const rankText = rank > 0 ? `#${rank} of ${allTimeBoard.length}` : 'Unranked';
+
+        return {
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: {
+            content: `${ISEE_EMOJI} **${username}**, the spirits reveal your devotion...\n\n` +
+              `**All-Time:** ${stats.allTime.score} pts (${stats.allTime.count} tributes) - ${rankText}\n` +
+              `**Fridays:** ${stats.friday.score} pts (${stats.friday.count} tributes)\n` +
+              `**Today:** ${stats.daily.score} pts (${stats.daily.count} tributes)\n` +
+              `**Private Devotion:** ${stats.private.score} pts (${stats.private.count} DM tributes)\n\n` +
+              `*Scoring: Tiki=10pts, Cocktail=5pts, Beer/Wine=2pts, Other=1pt*`,
+          },
+        };
+      }
+
+      if (subcommand === 'leaderboard') {
+        const allTime = getAllTimeLeaderboard().slice(0, 10);
+        const daily = getDailyLeaderboard().slice(0, 5);
+        const friday = getFridayLeaderboard().slice(0, 5);
+
+        let content = `${ISEE_EMOJI} **THE SPIRITS REVEAL THE DEVOTED...**\n\n`;
+
+        if (allTime.length > 0) {
+          content += `**🏆 All-Time Rankings:**\n`;
+          allTime.forEach((entry, i) => {
+            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+            content += `${medal} <@${entry.userId}> - ${entry.score}pts (${entry.count} tributes)\n`;
+          });
+        } else {
+          content += `*No tributes yet... The spirits HUNGER.*\n`;
+        }
+
+        if (daily.length > 0) {
+          content += `\n**📅 Today's Devoted:**\n`;
+          daily.forEach((entry, i) => {
+            content += `${i + 1}. <@${entry.userId}> - ${entry.score}pts\n`;
+          });
+        }
+
+        if (friday.length > 0) {
+          content += `\n**🗿 Friday Champions:**\n`;
+          friday.forEach((entry, i) => {
+            content += `${i + 1}. <@${entry.userId}> - ${entry.score}pts\n`;
+          });
+        }
+
+        return {
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: { content },
+        };
+      }
+
+      return {
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: {
+          content: `${ISEE_EMOJI} Unknown tally command. Use \`/tally me\` or \`/tally leaderboard\`.`,
+        },
+      };
+    }
+
     // Legacy /beer command - redirect to /tribute
     case 'beer': {
       const subcommand = options[0]?.name || 'status';
@@ -199,7 +337,7 @@ async function handleApplicationCommand(
       return {
         type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
         data: {
-          content: `${ISEE_EMOJI} Unknown invocation. The spirits recognize: \`/tribute\`, \`/ask\`, \`/drink\`, or \`/cheers\`.`,
+          content: `${ISEE_EMOJI} Unknown invocation. The spirits recognize: \`/tribute\`, \`/ask\`, \`/tally\`, \`/demand\`, \`/drink\`, or \`/cheers\`.`,
         },
       };
   }
