@@ -46,13 +46,23 @@ client.once(Events.ClientReady, readyClient => {
 
 // Event: Message received
 client.on(Events.MessageCreate, async message => {
+  // Debug: log all messages received
+  console.log(`[DEBUG] Message received from ${message.author.tag}: "${message.content.slice(0, 50)}..."`);
+
   // Ignore messages from bots (including self)
-  if (message.author.bot) return;
+  if (message.author.bot) {
+    console.log('[DEBUG] Ignoring bot message');
+    return;
+  }
 
   // Check if bot was mentioned
+  console.log(`[DEBUG] Checking mentions. Bot user: ${client.user?.tag}, Mentioned: ${message.mentions.users.map(u => u.tag).join(', ')}`);
+
   if (client.user && message.mentions.has(client.user)) {
+    console.log('[DEBUG] Bot was mentioned! Handling...');
     try {
       await handleMentionMessage(message);
+      console.log('[DEBUG] Mention handled successfully');
     } catch (error) {
       console.error('Error handling mention:', error);
     }

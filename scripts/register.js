@@ -1,31 +1,23 @@
 /**
  * Script to register slash commands with Discord
- *
- * Run with: npm run register
- *
- * Make sure to set the following environment variables:
- * - DISCORD_APP_ID
- * - DISCORD_BOT_TOKEN
- * - DISCORD_GUILD_ID (optional, for guild-specific commands during development)
+ * Plain JavaScript version for easier execution
  */
 
-console.log('Starting registration script...');
-
-import * as dotenv from 'dotenv';
-dotenv.config();
-
-console.log('Loaded env, APP_ID:', process.env.DISCORD_APP_ID ? 'SET' : 'NOT SET');
+require('dotenv').config();
 
 const DISCORD_APP_ID = process.env.DISCORD_APP_ID;
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID;
+
+console.log('Starting command registration...');
+console.log('APP_ID:', DISCORD_APP_ID ? DISCORD_APP_ID.slice(0, 10) + '...' : 'NOT SET');
+console.log('TOKEN:', DISCORD_BOT_TOKEN ? 'SET' : 'NOT SET');
 
 if (!DISCORD_APP_ID || !DISCORD_BOT_TOKEN) {
   console.error('Missing required environment variables: DISCORD_APP_ID and DISCORD_BOT_TOKEN');
   process.exit(1);
 }
 
-// Slash command definitions
 const commands = [
   {
     name: 'tribute',
@@ -34,12 +26,12 @@ const commands = [
       {
         name: 'offer',
         description: 'Offer your Friday tribute to the spirits',
-        type: 1, // SUB_COMMAND
+        type: 1,
         options: [
           {
             name: 'image',
             description: 'Visual proof of your offering (the spirits demand it!)',
-            type: 11, // ATTACHMENT
+            type: 11,
             required: false,
           },
         ],
@@ -47,12 +39,12 @@ const commands = [
       {
         name: 'status',
         description: 'See who has honored the ritual this Friday',
-        type: 1, // SUB_COMMAND
+        type: 1,
       },
       {
         name: 'demand',
         description: 'Invoke the spirits to demand tribute from mortals',
-        type: 1, // SUB_COMMAND
+        type: 1,
       },
     ],
   },
@@ -63,7 +55,7 @@ const commands = [
       {
         name: 'question',
         description: 'Your question for the tiki spirits',
-        type: 3, // STRING
+        type: 3,
         required: true,
       },
     ],
@@ -75,12 +67,12 @@ const commands = [
       {
         name: 'ask',
         description: 'Ask a question about any drink (use /ask for a simpler command)',
-        type: 1, // SUB_COMMAND
+        type: 1,
         options: [
           {
             name: 'question',
             description: 'Your question about drinks',
-            type: 3, // STRING
+            type: 3,
             required: true,
           },
         ],
@@ -88,12 +80,12 @@ const commands = [
       {
         name: 'list',
         description: 'Reveal what ancient knowledge the spirits possess',
-        type: 1, // SUB_COMMAND
+        type: 1,
       },
       {
         name: 'random',
         description: 'Receive a random revelation from the tiki depths',
-        type: 1, // SUB_COMMAND
+        type: 1,
       },
     ],
   },
@@ -103,9 +95,7 @@ const commands = [
   },
 ];
 
-async function registerCommands(): Promise<void> {
-  // Use guild-specific endpoint for faster updates during development
-  // Use global endpoint for production
+async function registerCommands() {
   const url = DISCORD_GUILD_ID
     ? `https://discord.com/api/v10/applications/${DISCORD_APP_ID}/guilds/${DISCORD_GUILD_ID}/commands`
     : `https://discord.com/api/v10/applications/${DISCORD_APP_ID}/commands`;
@@ -130,7 +120,7 @@ async function registerCommands(): Promise<void> {
       process.exit(1);
     }
 
-    const data = (await response.json()) as { name: string; id: string }[];
+    const data = await response.json();
     console.log(`Successfully registered ${data.length} commands:`);
     data.forEach(cmd => {
       console.log(`  - /${cmd.name} (ID: ${cmd.id})`);

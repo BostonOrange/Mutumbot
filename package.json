@@ -4,7 +4,7 @@
   "description": "Mutumbot - The Ominous Tiki Entity of Tiki Room Stockholm",
   "main": "api/interactions.js",
   "scripts": {
-    "register": "npx ts-node scripts/register-commands.ts",
+    "register": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/register-commands.ts",
     "dev": "vercel dev",
     "gateway": "npx ts-node src/gateway/index.ts",
     "gateway:build": "tsc --project tsconfig.gateway.json",
@@ -24,6 +24,7 @@
     "@google/generative-ai": "^0.21.0",
     "discord-interactions": "^3.4.0",
     "discord.js": "^14.14.1",
+    "dotenv": "^17.2.3",
     "node-cron": "^3.0.3",
     "tweetnacl": "^1.0.3"
   },
@@ -31,8 +32,8 @@
     "@types/node": "^20.10.0",
     "@types/node-cron": "^3.0.11",
     "@vercel/node": "^3.0.0",
-    "typescript": "^5.3.0",
-    "ts-node": "^10.9.0"
+    "ts-node": "^10.9.0",
+    "typescript": "^5.3.0"
   },
   "engines": {
     "node": ">=18.0.0"
