@@ -4,7 +4,6 @@
   "description": "Discord bot for Friday beer tracking and drink questions",
   "main": "api/interactions.js",
   "scripts": {
-    "build": "tsc",
     "register": "npx ts-node scripts/register-commands.ts",
     "dev": "vercel dev",
     "lint": "eslint . --ext .ts"
