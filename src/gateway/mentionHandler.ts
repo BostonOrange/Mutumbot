@@ -9,7 +9,12 @@
 
 import { Message } from 'discord.js';
 import { handleMention, analyzeImage } from '../drink-questions';
-import { handleMentionTribute } from '../tribute-tracker';
+import {
+  handleMentionTribute,
+  getAllTimeTribute,
+  getDailyTribute,
+  getFridayTribute,
+} from '../tribute-tracker';
 import { ISEE_EMOJI } from '../personality';
 import { addToContext } from '../services/conversationContext';
 
@@ -46,6 +51,10 @@ export async function handleMentionMessage(message: Message): Promise<void> {
 
     // DM tributes get a different response (don't count toward tally)
     if (isDM) {
+      // Get their public tribute counts (from channel tributes, not DMs)
+      const publicAllTime = getAllTimeTribute(userId);
+      const publicFriday = getFridayTribute(userId);
+
       let dmResponse = `${ISEE_EMOJI} I SEE your private offering, **${username}**...`;
 
       if (imageDescription) {
@@ -53,6 +62,12 @@ export async function handleMentionMessage(message: Message): Promise<void> {
       }
 
       dmResponse += `\n\nThe spirits acknowledge your devotion.\n\n*Note: DM tributes are between you and the gods alone - they do not count toward the public leaderboard. Tribute in the sacred channels to compete with other mortals!*`;
+
+      // Add their public tribute count info to context so AI can answer follow-up questions
+      const tributeInfo = publicAllTime > 0
+        ? `[This user has ${publicAllTime} public channel tribute(s) recorded (${publicFriday} on Fridays). DM tributes do not count toward the tally.]`
+        : `[This user has no public channel tributes recorded yet. DM tributes do not count toward the tally - they must tribute in a server channel to be counted.]`;
+      addToContext(channelId, 'model', tributeInfo);
 
       await message.reply(dmResponse);
       return;
@@ -66,6 +81,12 @@ export async function handleMentionMessage(message: Message): Promise<void> {
       message.content,
       imageDescription || undefined
     );
+
+    // Add tribute count info to context so AI can answer follow-up questions
+    const allTime = getAllTimeTribute(userId);
+    const daily = getDailyTribute(userId);
+    const fridayCount = getFridayTribute(userId);
+    addToContext(channelId, 'model', `[${username} now has ${allTime} total tribute(s), ${daily} today, ${fridayCount} on Fridays.]`);
 
     await message.reply(result.content);
     return;
