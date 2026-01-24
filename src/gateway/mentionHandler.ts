@@ -3,30 +3,23 @@
  *
  * Handles @Mutumbot mentions in Discord messages.
  * Detects image attachments for tribute offerings (any day!).
- * DM tributes are acknowledged but don't count toward competitive tallies.
- * Now with VISION - Mutumbot actually SEES the images!
+ * Uses database for all persistent storage.
+ * Provides rich AI context for answering questions.
  */
 
 import { Message } from 'discord.js';
-import { handleMention, analyzeImage, TRIBUTE_SCORES, type ImageAnalysis } from '../drink-questions';
+import { handleMention, analyzeImage, TRIBUTE_SCORES } from '../drink-questions';
 import {
   handleMentionTribute,
-  getFullUserStats,
-  getFullUserStatsAsync,
-  getPrivateDevotionStats,
-  getPrivateDevotionStatsAsync,
   recordTributePost,
-  getLeaderboardContext,
-  getLeaderboardContextAsync,
-  getFridayStatus,
-  getFridayStatusAsync,
+  getFullUserStats,
   getAllTimeLeaderboard,
-  getAllTimeLeaderboardAsync,
   getDailyLeaderboard,
-  getDailyLeaderboardAsync,
   getFridayLeaderboard,
-  getFridayLeaderboardAsync,
-  getFridayStatsAsync,
+  getFridayStatus,
+  getFridayStats,
+  getLeaderboardContext,
+  getAIContext,
   isFriday,
 } from '../tribute-tracker';
 import { ISEE_EMOJI, getRandomPhrase, NO_TRIBUTES_PHRASES, TRIBUTES_RECEIVED_STATUS } from '../personality';
@@ -51,52 +44,42 @@ export async function handleMentionMessage(message: Message): Promise<void> {
   const isDM = !message.guild;
 
   // Check for image attachments
-  // Note: contentType can be null/undefined for some Discord attachments,
-  // so we also check the URL for common image extensions as fallback
   const imageAttachment = message.attachments.find(att =>
     att.contentType?.startsWith('image/') ||
     /\.(png|jpg|jpeg|gif|webp)($|\?)/i.test(att.url)
   );
 
-  // Check if today is Friday
-  const isSpecialDay = new Date().getDay() === 5;
+  const isSpecialDay = isFriday();
 
-  // If there's an image, treat as a tribute (any day!)
+  // If there's an image, treat as a tribute
   if (imageAttachment) {
-    // Analyze the image so Mutumbot actually SEES and JUDGES it
-    // Pass context so AI can generate appropriate response
     const imageAnalysis = await analyzeImage(imageAttachment.url, message.content, isSpecialDay, isDM);
 
-    // Store the user's message and image analysis in context for follow-up questions
+    // Store user's message in context
     const userContextMessage = message.content
       ? `[Sent an image with message: "${message.content.replace(/<@!?\d+>/g, '').trim()}"]`
       : '[Sent an image as tribute]';
     addToContext(channelId, 'user', userContextMessage);
 
     if (imageAnalysis) {
-      // Store what Mutumbot saw + the scoring in context
       const categoryLabel = CATEGORY_LABELS[imageAnalysis.category] || imageAnalysis.category;
       addToContext(channelId, 'model', `[I observed this image: ${imageAnalysis.description}. Category: ${categoryLabel}${imageAnalysis.drinkName ? `, identified as: ${imageAnalysis.drinkName}` : ''}. Worth ${imageAnalysis.score} points.]`);
     }
 
-    // DM tributes go to private devotion tally (separate from competitive leaderboard)
+    // DM tributes
     if (isDM) {
       const score = imageAnalysis?.score || TRIBUTE_SCORES.OTHER;
+      const category = (imageAnalysis?.category as 'TIKI' | 'COCKTAIL' | 'BEER_WINE' | 'OTHER') || 'OTHER';
 
-      // Record the DM tribute to private devotion
-      recordTributePost({
-        userId,
-        username,
-        timestamp: new Date().toISOString(),
-        imageUrl: imageAttachment.url,
-        guildId: 'dm',
-      }, score);
+      await recordTributePost(
+        { userId, username, guildId: 'dm', channelId, imageUrl: imageAttachment.url, timestamp: new Date().toISOString() },
+        score,
+        category,
+        imageAnalysis?.drinkName,
+        imageAnalysis?.description,
+        imageAnalysis?.response
+      );
 
-      // Get all their stats (for AI context, not display)
-      const privateStats = getPrivateDevotionStats(userId);
-      const publicStats = getFullUserStats(userId);
-
-      // Use AI-generated response if available, otherwise fallback
       let dmResponse: string;
       if (imageAnalysis?.response) {
         dmResponse = `${ISEE_EMOJI} ${imageAnalysis.response}`;
@@ -104,27 +87,28 @@ export async function handleMentionMessage(message: Message): Promise<void> {
         dmResponse = `${ISEE_EMOJI} I SEE your private offering, **${username}**... The spirits acknowledge your devotion.`;
       }
 
-      // Add comprehensive stats to context for AI (user can ask for stats)
-      addToContext(channelId, 'model', `[${username}'s stats - Private devotion: ${privateStats.score}pts from ${privateStats.count} DM tributes. Public channel: ${publicStats.allTime.score}pts from ${publicStats.allTime.count} tributes (${publicStats.friday.score}pts on Fridays). Scoring: Tiki=10pts, Cocktail=5pts, Beer/Wine=2pts, Other=1pt. DM tributes don't count toward public leaderboard. User can ask "what's my score" or "how many tributes" to get their stats.]`);
+      // Add comprehensive AI context
+      const aiContext = await getAIContext(userId, channelId);
+      addToContext(channelId, 'model', aiContext);
 
       await message.reply(dmResponse);
       return;
     }
 
     // Public channel tribute
-    const result = handleMentionTribute(
+    const result = await handleMentionTribute(
       userId,
       username,
       guildId,
+      channelId,
       imageAttachment.url,
       message.content,
       imageAnalysis || undefined
     );
 
-    // Add comprehensive stats + leaderboard info to context
-    const stats = getFullUserStats(userId);
-    const leaderboard = getLeaderboardContext();
-    addToContext(channelId, 'model', `[${username}'s updated stats - Today: ${stats.daily.score}pts (${stats.daily.count} tributes), Fridays: ${stats.friday.score}pts, All-time: ${stats.allTime.score}pts (${stats.allTime.count} tributes). Scoring: Tiki=10pts, Cocktail=5pts, Beer/Wine=2pts, Other=1pt.]\n${leaderboard}`);
+    // Add comprehensive AI context
+    const aiContext = await getAIContext(userId, channelId);
+    addToContext(channelId, 'model', aiContext);
 
     await message.reply(result.content);
     return;
@@ -133,34 +117,30 @@ export async function handleMentionMessage(message: Message): Promise<void> {
   // No image - check for status/tally keywords first
   const cleanedContent = message.content.replace(/<@!?\d+>/g, '').trim().toLowerCase();
 
-  // Check for status/tally related keywords
+  // Check for status query
   if (isStatusQuery(cleanedContent)) {
-    const statusResponse = await handleStatusQueryAsync(userId, username, guildId, isDM);
+    const statusResponse = await handleStatusQuery(userId, username, guildId);
     await message.reply(statusResponse);
     return;
   }
 
-  // Check for personal stats queries
+  // Check for personal stats query
   if (isPersonalStatsQuery(cleanedContent)) {
-    const statsResponse = await handlePersonalStatsQueryAsync(userId, username);
+    const statsResponse = await handlePersonalStatsQuery(userId, username);
     await message.reply(statsResponse);
     return;
   }
 
-  // Check for leaderboard queries
+  // Check for leaderboard query
   if (isLeaderboardQuery(cleanedContent)) {
-    const leaderboardResponse = await handleLeaderboardQueryAsync();
+    const leaderboardResponse = await handleLeaderboardQuery();
     await message.reply(leaderboardResponse);
     return;
   }
 
-  // General question/conversation - add user stats context so AI can answer stats questions
-  const [stats, privateStats, leaderboard] = await Promise.all([
-    getFullUserStatsAsync(userId),
-    getPrivateDevotionStatsAsync(userId),
-    getLeaderboardContextAsync(),
-  ]);
-  addToContext(channelId, 'model', `[${username}'s current stats - All-time: ${stats.allTime.score}pts (${stats.allTime.count} tributes), Fridays: ${stats.friday.score}pts, Today: ${stats.daily.score}pts. Private devotion: ${privateStats.score}pts from ${privateStats.count} DM tributes. Scoring: Tiki=10pts, Cocktail=5pts, Beer/Wine=2pts, Other=1pt.]\n${leaderboard}`);
+  // General question/conversation - add rich AI context from database
+  const aiContext = await getAIContext(userId, channelId);
+  addToContext(channelId, 'model', aiContext);
 
   const response = await handleMention(message.content, channelId);
   await message.reply(response.content);
@@ -203,10 +183,10 @@ function isLeaderboardQuery(content: string): boolean {
 }
 
 /**
- * Handle tribute status query (async, uses database)
+ * Handle tribute status query
  */
-async function handleStatusQueryAsync(userId: string, username: string, guildId: string, isDM: boolean): Promise<string> {
-  const status = await getFridayStatusAsync(guildId);
+async function handleStatusQuery(userId: string, username: string, guildId: string): Promise<string> {
+  const status = await getFridayStatus(guildId);
   const fridayLabel = isFriday() ? 'this sacred Friday' : `Friday (${status.date})`;
 
   if (!status.hasTributePost) {
@@ -215,8 +195,8 @@ async function handleStatusQueryAsync(userId: string, username: string, guildId:
 
   const devoteePromises = status.posts.map(async p => {
     const [stats, fridayS] = await Promise.all([
-      getFullUserStatsAsync(p.userId),
-      getFridayStatsAsync(p.userId),
+      getFullUserStats(p.userId),
+      getFridayStats(p.userId),
     ]);
     return `  - ${p.username} (${stats.allTime.score}pts from ${stats.allTime.count} tributes | Fridays: ${fridayS.score}pts)`;
   });
@@ -224,8 +204,7 @@ async function handleStatusQueryAsync(userId: string, username: string, guildId:
 
   let response = `${getRandomPhrase(TRIBUTES_RECEIVED_STATUS)}\n\n**${fridayLabel}**: ${status.posts.length} offering${status.posts.length !== 1 ? 's' : ''} recorded.\n\n**Devoted mortals:**\n${devotees}`;
 
-  // Add leaderboard teaser
-  const leaderboard = await getAllTimeLeaderboardAsync();
+  const leaderboard = await getAllTimeLeaderboard(5);
   if (leaderboard.length > 0) {
     const top = leaderboard[0];
     response += `\n\n${ISEE_EMOJI} **Most devoted:** <@${top.userId}> with ${top.score}pts from ${top.count} tributes`;
@@ -235,12 +214,12 @@ async function handleStatusQueryAsync(userId: string, username: string, guildId:
 }
 
 /**
- * Handle personal stats query (async, uses database)
+ * Handle personal stats query
  */
-async function handlePersonalStatsQueryAsync(userId: string, username: string): Promise<string> {
+async function handlePersonalStatsQuery(userId: string, username: string): Promise<string> {
   const [stats, allTimeBoard] = await Promise.all([
-    getFullUserStatsAsync(userId),
-    getAllTimeLeaderboardAsync(),
+    getFullUserStats(userId),
+    getAllTimeLeaderboard(50),
   ]);
   const rank = allTimeBoard.findIndex(e => e.userId === userId) + 1;
   const rankText = rank > 0 ? `#${rank} of ${allTimeBoard.length}` : 'Unranked';
@@ -254,13 +233,13 @@ async function handlePersonalStatsQueryAsync(userId: string, username: string): 
 }
 
 /**
- * Handle leaderboard query (async, uses database)
+ * Handle leaderboard query
  */
-async function handleLeaderboardQueryAsync(): Promise<string> {
+async function handleLeaderboardQuery(): Promise<string> {
   const [allTimeRaw, dailyRaw, fridayRaw] = await Promise.all([
-    getAllTimeLeaderboardAsync(),
-    getDailyLeaderboardAsync(),
-    getFridayLeaderboardAsync(),
+    getAllTimeLeaderboard(50),
+    getDailyLeaderboard(20),
+    getFridayLeaderboard(20),
   ]);
   const allTime = allTimeRaw.slice(0, 10);
   const daily = dailyRaw.slice(0, 5);

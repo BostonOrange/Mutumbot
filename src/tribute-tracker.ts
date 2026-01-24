@@ -1,16 +1,10 @@
 /**
  * Tribute Tracker
  *
- * The ancient tiki god tracks ALL offerings across multiple categories:
- * - All-time tributes (running tally)
- * - Daily tributes
- * - Friday sacred tributes
- *
- * Uses Neon DB for persistent storage when available,
- * falls back to in-memory storage otherwise.
+ * Wrapper around database functions for tribute tracking.
+ * All data is stored in Neon DB - no in-memory fallback.
  */
 
-import { TributePost, FridayStatus } from './types';
 import {
   ISEE_EMOJI,
   getRandomPhrase,
@@ -20,416 +14,167 @@ import {
   NO_TRIBUTES_PHRASES,
   TRIBUTES_RECEIVED_STATUS,
 } from './personality';
+
 import {
-  isDatabaseAvailable,
-  dbRecordTribute,
-  dbGetFridayPosts,
-  dbGetAllTimeStats,
-  dbGetDailyStats,
-  dbGetFridayStats,
-  dbGetPrivateStats,
-  dbGetAllTimeLeaderboard,
-  dbGetDailyLeaderboard,
-  dbGetFridayLeaderboard,
-  dbHasUserOfferedTribute,
+  recordTribute,
+  getUserStats,
+  getAllTimeStats,
+  getDailyStats,
+  getFridayStats,
+  getPrivateStats,
+  getAllTimeLeaderboard,
+  getDailyLeaderboard,
+  getFridayLeaderboard,
+  getFridayStatus,
+  hasUserOfferedTribute,
+  getCurrentFridayKey,
+  isFriday,
+  getAIContext,
+  formatLeaderboardForAI,
+  type TributeRecord,
+  type UserStats,
+  type DetailedUserStats,
+  type LeaderboardEntry,
+  type FridayStatus,
 } from './db';
 
-// ============ IN-MEMORY STORAGE (FALLBACK) ============
-// Used when DATABASE_URL is not configured
-
-// Weekly Friday posts (keyed by Friday date)
-const fridayPosts: Map<string, TributePost[]> = new Map();
-
-// User stats structure
-interface UserTributeStats {
-  count: number;
-  score: number;
-}
-
-// All-time tribute stats per user (public channel tributes only)
-const allTimeStats: Map<string, UserTributeStats> = new Map();
-
-// Today's tribute stats per user (keyed by date)
-const dailyStats: Map<string, Map<string, UserTributeStats>> = new Map();
-
-// Friday-specific tribute stats per user (only counts Friday tributes)
-const fridayStats: Map<string, UserTributeStats> = new Map();
-
-// Private devotion stats (DM tributes - separate from competitive leaderboard)
-const privateDevotionStats: Map<string, UserTributeStats> = new Map();
-
-// Helper to get or create stats
-function getOrCreateStats(map: Map<string, UserTributeStats>, key: string): UserTributeStats {
-  let stats = map.get(key);
-  if (!stats) {
-    stats = { count: 0, score: 0 };
-    map.set(key, stats);
-  }
-  return stats;
-}
-
-// ============ DATE HELPERS ============
-
-/**
- * Get today's date key (YYYY-MM-DD)
- */
-function getTodayKey(): string {
-  return new Date().toISOString().split('T')[0];
-}
-
-/**
- * Get the current/most recent Friday's date key
- */
-export function getCurrentFridayKey(): string {
-  const now = new Date();
-  const dayOfWeek = now.getDay();
-  const daysToSubtract = dayOfWeek >= 5 ? dayOfWeek - 5 : dayOfWeek + 2;
-  const friday = new Date(now);
-  friday.setDate(friday.getDate() - daysToSubtract);
-  return friday.toISOString().split('T')[0];
-}
-
-/**
- * Check if today is Friday
- */
-export function isFriday(): boolean {
-  return new Date().getDay() === 5;
-}
+// Re-export types and functions from db
+export {
+  getCurrentFridayKey,
+  isFriday,
+  getAllTimeStats,
+  getDailyStats,
+  getFridayStats,
+  getPrivateStats,
+  getAllTimeLeaderboard,
+  getDailyLeaderboard,
+  getFridayLeaderboard,
+  getFridayStatus,
+  hasUserOfferedTribute,
+  getUserStats,
+  getAIContext,
+  formatLeaderboardForAI,
+};
+export type { UserStats, DetailedUserStats, LeaderboardEntry, FridayStatus };
 
 // ============ TRIBUTE RECORDING ============
 
-const DEFAULT_SCORE = 1;
+export interface TributePost {
+  userId: string;
+  username: string;
+  guildId: string;
+  channelId?: string;
+  imageUrl?: string;
+  timestamp: string;
+}
 
 /**
- * Record a tribute and update all stats (count + score)
- * Uses database when available, falls back to in-memory storage
+ * Record a tribute to the database
  */
-export async function recordTributePostAsync(post: TributePost, score: number = DEFAULT_SCORE): Promise<void> {
+export async function recordTributePost(
+  post: TributePost,
+  score: number = 1,
+  category: 'TIKI' | 'COCKTAIL' | 'BEER_WINE' | 'OTHER' = 'OTHER',
+  drinkName?: string,
+  description?: string,
+  aiResponse?: string
+): Promise<void> {
   const fridayKey = getCurrentFridayKey();
-  const guildId = post.guildId || 'unknown';
+  const isDm = post.guildId === 'dm';
+  const isSpecialDay = isFriday();
 
-  if (isDatabaseAvailable()) {
-    // Use persistent database storage
-    await dbRecordTribute(
-      post.userId,
-      post.username,
-      guildId,
-      fridayKey,
-      score,
-      post.imageUrl
-    );
-  } else {
-    // Fall back to in-memory storage
-    recordTributePostSync(post, score);
-  }
+  await recordTribute({
+    userId: post.userId,
+    username: post.username,
+    guildId: post.guildId,
+    channelId: post.channelId,
+    isDm,
+    imageUrl: post.imageUrl,
+    category,
+    drinkName,
+    description,
+    aiResponse,
+    score,
+    fridayKey,
+    isFriday: isSpecialDay,
+  });
 }
 
-/**
- * Synchronous version for backwards compatibility
- * Records to in-memory storage only (and async to DB if available)
- */
-export function recordTributePost(post: TributePost, score: number = DEFAULT_SCORE): void {
-  // Always record to in-memory for immediate access
-  recordTributePostSync(post, score);
-
-  // Also persist to database asynchronously if available
-  if (isDatabaseAvailable()) {
-    const fridayKey = getCurrentFridayKey();
-    dbRecordTribute(
-      post.userId,
-      post.username,
-      post.guildId || 'unknown',
-      fridayKey,
-      score,
-      post.imageUrl
-    ).catch(err => console.error('Failed to persist tribute to DB:', err));
-  }
-}
-
-/**
- * Internal synchronous recording to in-memory storage
- */
-function recordTributePostSync(post: TributePost, score: number): void {
-  // DM tributes go to private devotion stats only
-  if (post.guildId === 'dm') {
-    const stats = getOrCreateStats(privateDevotionStats, post.userId);
-    stats.count += 1;
-    stats.score += score;
-    return;
-  }
-
-  const todayKey = getTodayKey();
-  const fridayKey = getCurrentFridayKey();
-
-  // Record in Friday posts (for weekly tracking)
-  const posts = fridayPosts.get(fridayKey) || [];
-  posts.push(post);
-  fridayPosts.set(fridayKey, posts);
-
-  // Update all-time stats
-  const allTimeUserStats = getOrCreateStats(allTimeStats, post.userId);
-  allTimeUserStats.count += 1;
-  allTimeUserStats.score += score;
-
-  // Update daily stats
-  if (!dailyStats.has(todayKey)) {
-    dailyStats.set(todayKey, new Map());
-  }
-  const todayMap = dailyStats.get(todayKey)!;
-  const dailyUserStats = getOrCreateStats(todayMap, post.userId);
-  dailyUserStats.count += 1;
-  dailyUserStats.score += score;
-
-  // Update Friday stats (only if it's Friday)
-  if (isFriday()) {
-    const fridayUserStats = getOrCreateStats(fridayStats, post.userId);
-    fridayUserStats.count += 1;
-    fridayUserStats.score += score;
-  }
-}
-
-// ============ STATS GETTERS ============
+// ============ STATS GETTERS (SIMPLE WRAPPERS) ============
 
 export interface TributeStatsResult {
   count: number;
   score: number;
 }
 
-export async function getAllTimeStatsAsync(userId: string): Promise<TributeStatsResult> {
-  if (isDatabaseAvailable()) {
-    return dbGetAllTimeStats(userId);
-  }
-  return allTimeStats.get(userId) || { count: 0, score: 0 };
-}
-
-export function getAllTimeStats(userId: string): TributeStatsResult {
-  return allTimeStats.get(userId) || { count: 0, score: 0 };
-}
-
-export async function getDailyStatsAsync(userId: string): Promise<TributeStatsResult> {
-  if (isDatabaseAvailable()) {
-    return dbGetDailyStats(userId, getTodayKey());
-  }
-  const todayKey = getTodayKey();
-  const todayMap = dailyStats.get(todayKey);
-  return todayMap?.get(userId) || { count: 0, score: 0 };
-}
-
-export function getDailyStats(userId: string): TributeStatsResult {
-  const todayKey = getTodayKey();
-  const todayMap = dailyStats.get(todayKey);
-  return todayMap?.get(userId) || { count: 0, score: 0 };
-}
-
-export async function getFridayStatsAsync(userId: string): Promise<TributeStatsResult> {
-  if (isDatabaseAvailable()) {
-    return dbGetFridayStats(userId);
-  }
-  return fridayStats.get(userId) || { count: 0, score: 0 };
-}
-
-export function getFridayStats(userId: string): TributeStatsResult {
-  return fridayStats.get(userId) || { count: 0, score: 0 };
-}
-
-export async function getPrivateDevotionStatsAsync(userId: string): Promise<TributeStatsResult> {
-  if (isDatabaseAvailable()) {
-    return dbGetPrivateStats(userId);
-  }
-  return privateDevotionStats.get(userId) || { count: 0, score: 0 };
-}
-
-export function getPrivateDevotionStats(userId: string): TributeStatsResult {
-  return privateDevotionStats.get(userId) || { count: 0, score: 0 };
-}
-
-// Legacy count-only getters
-export function getAllTimeTribute(userId: string): number {
-  return getAllTimeStats(userId).count;
-}
-
-export function getDailyTribute(userId: string): number {
-  return getDailyStats(userId).count;
-}
-
-export function getFridayTribute(userId: string): number {
-  return getFridayStats(userId).count;
-}
-
-export function getPrivateDevotion(userId: string): number {
-  return getPrivateDevotionStats(userId).count;
-}
-
 /**
- * Get full user stats (async version that uses DB when available)
+ * Get full user stats
  */
-export async function getFullUserStatsAsync(userId: string): Promise<{
+export async function getFullUserStats(userId: string): Promise<{
   allTime: TributeStatsResult;
   daily: TributeStatsResult;
   friday: TributeStatsResult;
   private: TributeStatsResult;
 }> {
-  if (isDatabaseAvailable()) {
-    const [allTime, daily, friday, privateStats] = await Promise.all([
-      dbGetAllTimeStats(userId),
-      dbGetDailyStats(userId, getTodayKey()),
-      dbGetFridayStats(userId),
-      dbGetPrivateStats(userId),
-    ]);
-    return { allTime, daily, friday, private: privateStats };
-  }
-  return getFullUserStats(userId);
-}
+  const [allTime, daily, friday, privateStats] = await Promise.all([
+    getAllTimeStats(userId),
+    getDailyStats(userId),
+    getFridayStats(userId),
+    getPrivateStats(userId),
+  ]);
 
-/**
- * Get full user stats (sync version, in-memory only)
- */
-export function getFullUserStats(userId: string): {
-  allTime: TributeStatsResult;
-  daily: TributeStatsResult;
-  friday: TributeStatsResult;
-  private: TributeStatsResult;
-} {
   return {
-    allTime: getAllTimeStats(userId),
-    daily: getDailyStats(userId),
-    friday: getFridayStats(userId),
-    private: getPrivateDevotionStats(userId),
+    allTime,
+    daily,
+    friday,
+    private: privateStats,
   };
 }
 
-// ============ LEADERBOARDS ============
-
-export interface LeaderboardEntry {
-  userId: string;
-  count: number;
-  score: number;
-}
-
-export async function getAllTimeLeaderboardAsync(): Promise<LeaderboardEntry[]> {
-  if (isDatabaseAvailable()) {
-    return dbGetAllTimeLeaderboard();
-  }
-  return getAllTimeLeaderboard();
-}
-
-export function getAllTimeLeaderboard(): LeaderboardEntry[] {
-  return Array.from(allTimeStats.entries())
-    .sort((a, b) => b[1].score - a[1].score)
-    .map(([userId, stats]) => ({ userId, count: stats.count, score: stats.score }));
-}
-
-export async function getDailyLeaderboardAsync(): Promise<LeaderboardEntry[]> {
-  if (isDatabaseAvailable()) {
-    return dbGetDailyLeaderboard(getTodayKey());
-  }
-  return getDailyLeaderboard();
-}
-
-export function getDailyLeaderboard(): LeaderboardEntry[] {
-  const todayKey = getTodayKey();
-  const todayMap = dailyStats.get(todayKey);
-  if (!todayMap) return [];
-
-  return Array.from(todayMap.entries())
-    .sort((a, b) => b[1].score - a[1].score)
-    .map(([userId, stats]) => ({ userId, count: stats.count, score: stats.score }));
-}
-
-export async function getFridayLeaderboardAsync(): Promise<LeaderboardEntry[]> {
-  if (isDatabaseAvailable()) {
-    return dbGetFridayLeaderboard();
-  }
-  return getFridayLeaderboard();
-}
-
-export function getFridayLeaderboard(): LeaderboardEntry[] {
-  return Array.from(fridayStats.entries())
-    .sort((a, b) => b[1].score - a[1].score)
-    .map(([userId, stats]) => ({ userId, count: stats.count, score: stats.score }));
-}
-
 /**
- * Format leaderboard for AI context (async)
+ * Format leaderboard for AI context
  */
-export async function getLeaderboardContextAsync(): Promise<string> {
+export async function getLeaderboardContext(): Promise<string> {
   const [allTime, daily, friday] = await Promise.all([
-    getAllTimeLeaderboardAsync(),
-    getDailyLeaderboardAsync(),
-    getFridayLeaderboardAsync(),
+    getAllTimeLeaderboard(10),
+    getDailyLeaderboard(5),
+    getFridayLeaderboard(5),
   ]);
 
-  let context = '[LEADERBOARD DATA - Ranked by score (Tiki=10pts, Cocktail=5pts, Beer/Wine=2pts, Other=1pt)]\\n';
-
-  if (allTime.length > 0) {
-    context += 'All-time top 5: ' + allTime.slice(0, 5).map((e, i) => `#${i + 1} <@${e.userId}> (${e.score}pts, ${e.count} tributes)`).join(', ') + '\\n';
-  }
-
-  if (daily.length > 0) {
-    context += 'Today top 5: ' + daily.slice(0, 5).map((e, i) => `#${i + 1} <@${e.userId}> (${e.score}pts)`).join(', ') + '\\n';
-  }
-
-  if (friday.length > 0) {
-    context += 'Friday top 5: ' + friday.slice(0, 5).map((e, i) => `#${i + 1} <@${e.userId}> (${e.score}pts)`).join(', ');
-  }
-
-  return context;
-}
-
-/**
- * Format leaderboard for AI context (sync, in-memory)
- */
-export function getLeaderboardContext(): string {
-  const allTime = getAllTimeLeaderboard().slice(0, 5);
-  const daily = getDailyLeaderboard().slice(0, 5);
-  const friday = getFridayLeaderboard().slice(0, 5);
-
-  let context = '[LEADERBOARD DATA - Ranked by score (Tiki=10pts, Cocktail=5pts, Beer/Wine=2pts, Other=1pt)]\\n';
-
-  if (allTime.length > 0) {
-    context += 'All-time top 5: ' + allTime.map((e, i) => `#${i + 1} <@${e.userId}> (${e.score}pts, ${e.count} tributes)`).join(', ') + '\\n';
-  }
-
-  if (daily.length > 0) {
-    context += 'Today top 5: ' + daily.map((e, i) => `#${i + 1} <@${e.userId}> (${e.score}pts)`).join(', ') + '\\n';
-  }
-
-  if (friday.length > 0) {
-    context += 'Friday top 5: ' + friday.map((e, i) => `#${i + 1} <@${e.userId}> (${e.score}pts)`).join(', ');
-  }
-
-  return context;
+  return formatLeaderboardForAI(allTime, daily, friday);
 }
 
 // ============ RANDOM PRAISE/CONDEMNATION ============
 
 const PRAISE_PHRASES = [
-  `${ISEE_EMOJI} The spirits SMILE upon **TOP_USER** who leads with **COUNT** tributes!`,
-  `${ISEE_EMOJI} **TOP_USER** has proven their devotion with **COUNT** offerings. The ancients are PLEASED.`,
-  `${ISEE_EMOJI} BEHOLD! **TOP_USER** stands as the most devoted with **COUNT** tributes!`,
-  `${ISEE_EMOJI} The tiki gods FAVOR **TOP_USER**... **COUNT** tributes speak of TRUE dedication.`,
+  `${ISEE_EMOJI} The spirits SMILE upon **TOP_USER** who leads with **COUNT**!`,
+  `${ISEE_EMOJI} **TOP_USER** has proven their devotion with **COUNT**. The ancients are PLEASED.`,
+  `${ISEE_EMOJI} BEHOLD! **TOP_USER** stands as the most devoted with **COUNT**!`,
+  `${ISEE_EMOJI} The tiki gods FAVOR **TOP_USER**... **COUNT** speaks of TRUE dedication.`,
 ];
 
 const CONDEMNATION_PHRASES = [
-  `${ISEE_EMOJI} The spirits grow RESTLESS... **LAZY_USER** has offered only **COUNT** tribute. SHAMEFUL.`,
-  `${ISEE_EMOJI} **LAZY_USER**... the ancients have NOTICED your **COUNT** measly offering. Do better.`,
-  `${ISEE_EMOJI} I SEE you, **LAZY_USER**. Only **COUNT** tribute? The spirits are... DISAPPOINTED.`,
-  `${ISEE_EMOJI} **LAZY_USER** lurks in the shadows with only **COUNT** offering. The gods REMEMBER.`,
+  `${ISEE_EMOJI} The spirits grow RESTLESS... **LAZY_USER** has offered only **COUNT**. SHAMEFUL.`,
+  `${ISEE_EMOJI} **LAZY_USER**... the ancients have NOTICED your **COUNT** measly offerings. Do better.`,
+  `${ISEE_EMOJI} I SEE you, **LAZY_USER**. Only **COUNT**? The spirits are... DISAPPOINTED.`,
+  `${ISEE_EMOJI} **LAZY_USER** lurks in the shadows with only **COUNT**. The gods REMEMBER.`,
 ];
 
 /**
  * Maybe generate random praise or condemnation (30% chance)
  */
-async function maybeGetRandomCommentAsync(): Promise<string | null> {
+async function maybeGetRandomComment(): Promise<string | null> {
   if (Math.random() > 0.3) return null;
 
-  const leaderboard = await getAllTimeLeaderboardAsync();
+  const leaderboard = await getAllTimeLeaderboard(10);
   if (leaderboard.length < 2) return null;
 
   if (Math.random() < 0.6) {
     const top = leaderboard[0];
     const phrase = getRandomPhrase(PRAISE_PHRASES);
-    return phrase.replace('TOP_USER', `<@${top.userId}>`).replace('COUNT', `${top.score}pts from ${top.count}`);
+    return phrase
+      .replace('TOP_USER', `<@${top.userId}>`)
+      .replace('COUNT', `${top.score}pts from ${top.count} tributes`);
   } else {
     const activeTributors = leaderboard.filter(u => u.count > 0);
     if (activeTributors.length < 2) return null;
@@ -438,95 +183,37 @@ async function maybeGetRandomCommentAsync(): Promise<string | null> {
     if (lowest.score === leaderboard[0].score) return null;
 
     const phrase = getRandomPhrase(CONDEMNATION_PHRASES);
-    return phrase.replace('LAZY_USER', `<@${lowest.userId}>`).replace('COUNT', `${lowest.score}pts from ${lowest.count}`);
+    return phrase
+      .replace('LAZY_USER', `<@${lowest.userId}>`)
+      .replace('COUNT', `${lowest.score}pts from ${lowest.count} tributes`);
   }
 }
 
-function maybeGetRandomComment(): string | null {
-  if (Math.random() > 0.3) return null;
+// ============ MILESTONE MESSAGES ============
 
-  const leaderboard = getAllTimeLeaderboard();
-  if (leaderboard.length < 2) return null;
+function getScoreMilestoneMessage(totalScore: number): string {
+  const milestones = [
+    { score: 50, msg: `**50 POINTS!** You have proven your devotion, mortal.` },
+    { score: 100, msg: `**100 POINTS!** The spirits recognize you as a TRUE DEVOTEE.` },
+    { score: 250, msg: `**250 POINTS!** You have ascended to TIKI ELDER status!` },
+    { score: 500, msg: `**500 POINTS!** The ancient ones BOW before your dedication!` },
+    { score: 1000, msg: `**1000 POINTS!** You have achieved TIKI IMMORTALITY! Legends speak of your name!` },
+  ];
 
-  if (Math.random() < 0.6) {
-    const top = leaderboard[0];
-    const phrase = getRandomPhrase(PRAISE_PHRASES);
-    return phrase.replace('TOP_USER', `<@${top.userId}>`).replace('COUNT', `${top.score}pts from ${top.count}`);
-  } else {
-    const activeTributors = leaderboard.filter(u => u.count > 0);
-    if (activeTributors.length < 2) return null;
-
-    const lowest = activeTributors[activeTributors.length - 1];
-    if (lowest.score === leaderboard[0].score) return null;
-
-    const phrase = getRandomPhrase(CONDEMNATION_PHRASES);
-    return phrase.replace('LAZY_USER', `<@${lowest.userId}>`).replace('COUNT', `${lowest.score}pts from ${lowest.count}`);
+  for (const milestone of milestones) {
+    if (totalScore >= milestone.score && totalScore < milestone.score + 10) {
+      return `\n\n${ISEE_EMOJI} ${milestone.msg}`;
+    }
   }
+  return '';
 }
-
-// ============ FRIDAY STATUS ============
-
-export async function getFridayStatusAsync(guildId: string): Promise<FridayStatus> {
-  const key = getCurrentFridayKey();
-
-  if (isDatabaseAvailable()) {
-    const posts = await dbGetFridayPosts(key, guildId);
-    return {
-      date: key,
-      hasTributePost: posts.length > 0,
-      posts: posts.map(p => ({
-        userId: p.userId,
-        username: p.username,
-        timestamp: p.timestamp,
-        imageUrl: p.imageUrl || undefined,
-        guildId: p.guildId,
-      })),
-    };
-  }
-
-  return getFridayStatus(guildId);
-}
-
-export function getFridayStatus(guildId: string): FridayStatus {
-  const key = getCurrentFridayKey();
-  const allPosts = fridayPosts.get(key) || [];
-  const guildPosts = allPosts.filter(p => p.guildId === guildId);
-
-  return {
-    date: key,
-    hasTributePost: guildPosts.length > 0,
-    posts: guildPosts,
-  };
-}
-
-export async function hasUserOfferedTributeAsync(userId: string, guildId: string): Promise<boolean> {
-  const key = getCurrentFridayKey();
-
-  if (isDatabaseAvailable()) {
-    return dbHasUserOfferedTribute(userId, guildId, key);
-  }
-
-  return hasUserOfferedTribute(userId, guildId);
-}
-
-export function hasUserOfferedTribute(userId: string, guildId: string): boolean {
-  const key = getCurrentFridayKey();
-  const allPosts = fridayPosts.get(key) || [];
-  return allPosts.some(p => p.userId === userId && p.guildId === guildId);
-}
-
-// ============ RESPONSE PHRASES ============
-
-const NON_FRIDAY_TRIBUTE_PHRASES = [
-  `${ISEE_EMOJI} An offering outside the sacred Friday? Your devotion is... NOTED.`,
-  `${ISEE_EMOJI} The spirits did not DEMAND this tribute... but they accept it nonetheless.`,
-  `${ISEE_EMOJI} UNEXPECTED... but welcome. Your offering pleases the ancient ones.`,
-  `${ISEE_EMOJI} A tribute on a common day? You seek FAVOR with the spirits...`,
-];
 
 // ============ COMMAND HANDLERS ============
 
-export async function handleTributeCommandAsync(
+/**
+ * Handle /tribute command
+ */
+export async function handleTributeCommand(
   subcommand: string,
   userId: string,
   username: string,
@@ -536,16 +223,17 @@ export async function handleTributeCommandAsync(
 ): Promise<{ content: string }> {
   switch (subcommand) {
     case 'offer': {
-      await recordTributePostAsync({
-        userId,
-        username,
-        timestamp: new Date().toISOString(),
-        imageUrl,
-        guildId,
-      });
-
-      const stats = await getFullUserStatsAsync(userId);
       const isTiki = messageContent ? isTikiRelated(messageContent) : false;
+      const category = isTiki ? 'TIKI' : 'OTHER';
+      const score = isTiki ? 10 : 1;
+
+      await recordTributePost(
+        { userId, username, guildId, imageUrl, timestamp: new Date().toISOString() },
+        score,
+        category
+      );
+
+      const stats = await getFullUserStats(userId);
       const isSpecialDay = isFriday();
 
       let response: string;
@@ -568,7 +256,7 @@ export async function handleTributeCommandAsync(
         response += `\n*Today: ${stats.daily.count} | All-time: ${stats.allTime.count}*`;
       }
 
-      const randomComment = await maybeGetRandomCommentAsync();
+      const randomComment = await maybeGetRandomComment();
       if (randomComment) {
         response += `\n\n${randomComment}`;
       }
@@ -579,7 +267,7 @@ export async function handleTributeCommandAsync(
     }
 
     case 'status': {
-      const status = await getFridayStatusAsync(guildId);
+      const status = await getFridayStatus(guildId);
       const fridayLabel = isFriday() ? 'this sacred Friday' : `Friday (${status.date})`;
 
       if (!status.hasTributePost) {
@@ -589,15 +277,15 @@ export async function handleTributeCommandAsync(
       }
 
       const devoteePromises = status.posts.map(async p => {
-        const stats = await getAllTimeStatsAsync(p.userId);
-        const fridayS = await getFridayStatsAsync(p.userId);
+        const stats = await getAllTimeStats(p.userId);
+        const fridayS = await getFridayStats(p.userId);
         return `  - ${p.username} (${stats.score}pts from ${stats.count} tributes | Fridays: ${fridayS.score}pts)`;
       });
       const devotees = (await Promise.all(devoteePromises)).join('\n');
 
       let response = `${getRandomPhrase(TRIBUTES_RECEIVED_STATUS)}\n\n**${fridayLabel}**: ${status.posts.length} offering${status.posts.length !== 1 ? 's' : ''} recorded.\n\n**Devoted mortals:**\n${devotees}`;
 
-      const leaderboard = await getAllTimeLeaderboardAsync();
+      const leaderboard = await getAllTimeLeaderboard(5);
       if (leaderboard.length > 0) {
         const top = leaderboard[0];
         response += `\n\n${ISEE_EMOJI} **Most devoted:** <@${top.userId}> with ${top.score}pts from ${top.count} tributes`;
@@ -613,115 +301,7 @@ export async function handleTributeCommandAsync(
         };
       }
 
-      const status = await getFridayStatusAsync(guildId);
-      if (status.hasTributePost) {
-        return {
-          content: `${ISEE_EMOJI} Tribute has already been offered this Friday. The spirits are... SATISFIED. For now.`,
-        };
-      }
-
-      return {
-        content: `${ISEE_EMOJI} **THE ANCIENT RITUAL DEMANDS TRIBUTE!**\n\nFriday has arrived and the spirits grow RESTLESS. Show me your vessels of the sacred elixir, mortals!\n\nUse \`/tribute offer\` with an image to appease the TIKI GODS.`,
-      };
-    }
-
-    default:
-      return {
-        content: `${ISEE_EMOJI} Unknown ritual command. The spirits recognize: \`/tribute offer\`, \`/tribute status\`, or \`/tribute demand\`.`,
-      };
-  }
-}
-
-export function handleTributeCommand(
-  subcommand: string,
-  userId: string,
-  username: string,
-  guildId: string,
-  imageUrl?: string,
-  messageContent?: string
-): { content: string } {
-  switch (subcommand) {
-    case 'offer': {
-      recordTributePost({
-        userId,
-        username,
-        timestamp: new Date().toISOString(),
-        imageUrl,
-        guildId,
-      });
-
-      const allTime = getAllTimeTribute(userId);
-      const daily = getDailyTribute(userId);
-      const fridayCount = getFridayTribute(userId);
-      const isTiki = messageContent ? isTikiRelated(messageContent) : false;
-      const isSpecialDay = isFriday();
-
-      let response: string;
-
-      if (isTiki && imageUrl) {
-        response = getRandomPhrase(TIKI_TRIBUTE_PHRASES);
-      } else if (imageUrl) {
-        response = getRandomPhrase(TRIBUTE_RECEIVED_PHRASES);
-      } else {
-        return {
-          content: `${ISEE_EMOJI} I acknowledge your intent, **${username}**... but the ritual demands VISUAL PROOF. Attach an image of your libation!`,
-        };
-      }
-
-      if (isSpecialDay) {
-        response += `\n\n**${username}** honors the SACRED FRIDAY RITUAL!`;
-        response += `\n*Today: ${daily} | Fridays: ${fridayCount} | All-time: ${allTime}*`;
-      } else {
-        response += `\n\n**${username}**'s tribute has been recorded.`;
-        response += `\n*Today: ${daily} | All-time: ${allTime}*`;
-      }
-
-      const randomComment = maybeGetRandomComment();
-      if (randomComment) {
-        response += `\n\n${randomComment}`;
-      }
-
-      const allTimeStats = getAllTimeStats(userId);
-      response += getScoreMilestoneMessage(allTimeStats.score);
-
-      return { content: response };
-    }
-
-    case 'status': {
-      const status = getFridayStatus(guildId);
-      const fridayLabel = isFriday() ? 'this sacred Friday' : `Friday (${status.date})`;
-
-      if (!status.hasTributePost) {
-        return {
-          content: `${getRandomPhrase(NO_TRIBUTES_PHRASES)}\n\n**${fridayLabel}**: The offering hall stands EMPTY.${isFriday() ? '\n\nUse `/tribute offer` to make your offering!' : ''}`,
-        };
-      }
-
-      const devotees = status.posts.map(p => {
-        const stats = getAllTimeStats(p.userId);
-        const fridayS = getFridayStats(p.userId);
-        return `  - ${p.username} (${stats.score}pts from ${stats.count} tributes | Fridays: ${fridayS.score}pts)`;
-      }).join('\n');
-
-      let response = `${getRandomPhrase(TRIBUTES_RECEIVED_STATUS)}\n\n**${fridayLabel}**: ${status.posts.length} offering${status.posts.length !== 1 ? 's' : ''} recorded.\n\n**Devoted mortals:**\n${devotees}`;
-
-      const leaderboard = getAllTimeLeaderboard();
-      if (leaderboard.length > 0) {
-        const top = leaderboard[0];
-        response += `\n\n${ISEE_EMOJI} **Most devoted:** <@${top.userId}> with ${top.score}pts from ${top.count} tributes`;
-      }
-
-      return { content: response };
-    }
-
-    case 'demand': {
-      if (!isFriday()) {
-        return {
-          content: 'The ritual day has not yet arrived. The spirits will make their demands when Friday awakens.',
-        };
-      }
-
-      const status = getFridayStatus(guildId);
+      const status = await getFridayStatus(guildId);
       if (status.hasTributePost) {
         return {
           content: `${ISEE_EMOJI} Tribute has already been offered this Friday. The spirits are... SATISFIED. For now.`,
@@ -743,25 +323,34 @@ export function handleTributeCommand(
 /**
  * Handle a tribute via @mention with image attachment
  */
-export function handleMentionTribute(
+export async function handleMentionTribute(
   userId: string,
   username: string,
   guildId: string,
+  channelId: string,
   imageUrl: string,
   messageContent?: string,
-  imageAnalysis?: { description: string; category: string; score: number; drinkName?: string; response?: string }
-): { content: string } {
+  imageAnalysis?: {
+    description: string;
+    category: string;
+    score: number;
+    drinkName?: string;
+    response?: string;
+  }
+): Promise<{ content: string }> {
   const score = imageAnalysis?.score || 1;
+  const category = (imageAnalysis?.category as 'TIKI' | 'COCKTAIL' | 'BEER_WINE' | 'OTHER') || 'OTHER';
 
-  recordTributePost({
-    userId,
-    username,
-    timestamp: new Date().toISOString(),
-    imageUrl,
-    guildId,
-  }, score);
+  await recordTributePost(
+    { userId, username, guildId, channelId, imageUrl, timestamp: new Date().toISOString() },
+    score,
+    category,
+    imageAnalysis?.drinkName,
+    imageAnalysis?.description,
+    imageAnalysis?.response
+  );
 
-  const allTimeS = getAllTimeStats(userId);
+  const allTimeStats = await getAllTimeStats(userId);
 
   let response: string;
   if (imageAnalysis?.response) {
@@ -770,32 +359,12 @@ export function handleMentionTribute(
     response = `${ISEE_EMOJI} I SEE your offering, **${username}**... The spirits acknowledge your tribute.`;
   }
 
-  const randomComment = maybeGetRandomComment();
+  const randomComment = await maybeGetRandomComment();
   if (randomComment) {
     response += `\n\n${randomComment}`;
   }
 
-  response += getScoreMilestoneMessage(allTimeS.score);
+  response += getScoreMilestoneMessage(allTimeStats.score);
 
   return { content: response };
-}
-
-/**
- * Get milestone message based on score
- */
-function getScoreMilestoneMessage(totalScore: number): string {
-  const milestones = [
-    { score: 50, msg: `**50 POINTS!** You have proven your devotion, mortal.` },
-    { score: 100, msg: `**100 POINTS!** The spirits recognize you as a TRUE DEVOTEE.` },
-    { score: 250, msg: `**250 POINTS!** You have ascended to TIKI ELDER status!` },
-    { score: 500, msg: `**500 POINTS!** The ancient ones BOW before your dedication!` },
-    { score: 1000, msg: `**1000 POINTS!** You have achieved TIKI IMMORTALITY! Legends speak of your name!` },
-  ];
-
-  for (const milestone of milestones) {
-    if (totalScore >= milestone.score && totalScore < milestone.score + 10) {
-      return `\n\n${ISEE_EMOJI} ${milestone.msg}`;
-    }
-  }
-  return '';
 }

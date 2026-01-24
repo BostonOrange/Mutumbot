@@ -13,11 +13,11 @@ import {
   InteractionResponse,
 } from '../src/types';
 import {
-  handleTributeCommandAsync,
-  getFullUserStatsAsync,
-  getAllTimeLeaderboardAsync,
-  getDailyLeaderboardAsync,
-  getFridayLeaderboardAsync,
+  handleTributeCommand,
+  getFullUserStats,
+  getAllTimeLeaderboard,
+  getDailyLeaderboard,
+  getFridayLeaderboard,
 } from '../src/tribute-tracker';
 import { initializeDatabase } from '../src/db';
 import {
@@ -26,9 +26,6 @@ import {
   handleRandomDrinkFact,
 } from '../src/drink-questions';
 import { ISEE_EMOJI, getRandomPhrase, TRIBUTE_DEMAND_PHRASES } from '../src/personality';
-
-// Store scheduled demands (in production, use Redis or similar)
-const scheduledDemands: Map<string, { date: string; time: string; channelId: string }> = new Map();
 
 const DISCORD_PUBLIC_KEY = process.env.DISCORD_PUBLIC_KEY || '';
 
@@ -80,7 +77,8 @@ export default async function handler(
     await initializeDatabase();
   } catch (err) {
     console.error('Database initialization failed:', err);
-    // Continue anyway - will fall back to in-memory storage
+    res.status(500).json({ error: 'Database not available' });
+    return;
   }
 
   // Handle Application Commands (slash commands)
@@ -109,12 +107,11 @@ async function handleApplicationCommand(
   const channelId = interaction.channel_id;
 
   switch (commandName) {
-    // /tribute command (formerly /beer)
+    // /tribute command
     case 'tribute': {
       const subcommand = options[0]?.name || 'status';
       let imageUrl: string | undefined;
 
-      // Check for image attachment in offer subcommand
       if (subcommand === 'offer') {
         const imageOption = options[0]?.options?.find(opt => opt.name === 'image');
         if (imageOption && interaction.data?.resolved?.attachments) {
@@ -123,7 +120,7 @@ async function handleApplicationCommand(
         }
       }
 
-      const result = await handleTributeCommandAsync(subcommand, userId, username, guildId, imageUrl);
+      const result = await handleTributeCommand(subcommand, userId, username, guildId, imageUrl);
 
       return {
         type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -131,7 +128,7 @@ async function handleApplicationCommand(
       };
     }
 
-    // /ask command (direct questions, formerly /drink ask)
+    // /ask command
     case 'ask': {
       const questionOption = options.find(opt => opt.name === 'question');
       const question = (questionOption?.value as string) || '';
@@ -143,7 +140,7 @@ async function handleApplicationCommand(
       };
     }
 
-    // /drink command (legacy, for list and random)
+    // /drink command (legacy)
     case 'drink': {
       const subcommand = options[0]?.name || 'list';
 
@@ -166,7 +163,6 @@ async function handleApplicationCommand(
         };
       }
 
-      // Default to list
       const result = handleDrinkList();
       return {
         type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -174,7 +170,7 @@ async function handleApplicationCommand(
       };
     }
 
-    // /cheers command - now with ominous flair
+    // /cheers command
     case 'cheers': {
       return {
         type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -184,75 +180,34 @@ async function handleApplicationCommand(
       };
     }
 
-    // /demand command - Admin only, trigger tribute demands
+    // /demand command
     case 'demand': {
       const subcommand = options[0]?.name || 'now';
 
       if (subcommand === 'now') {
-        // Post an immediate demand
         const demandMessage = getRandomPhrase(TRIBUTE_DEMAND_PHRASES);
         return {
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-          data: {
-            content: demandMessage,
-          },
-        };
-      }
-
-      if (subcommand === 'schedule') {
-        const dateOption = options[0]?.options?.find(opt => opt.name === 'date');
-        const timeOption = options[0]?.options?.find(opt => opt.name === 'time');
-        const date = dateOption?.value as string;
-        const time = timeOption?.value as string;
-
-        // Validate date format
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-          return {
-            type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-            data: {
-              content: `${ISEE_EMOJI} The spirits cannot comprehend this date format. Use YYYY-MM-DD (e.g., 2024-01-26).`,
-            },
-          };
-        }
-
-        // Validate time format
-        if (!/^\d{2}:\d{2}$/.test(time)) {
-          return {
-            type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-            data: {
-              content: `${ISEE_EMOJI} The spirits cannot comprehend this time format. Use HH:MM in 24h format (e.g., 15:30).`,
-            },
-          };
-        }
-
-        // Store the scheduled demand (note: in-memory, won't persist across deploys)
-        const demandId = `${guildId}-${Date.now()}`;
-        scheduledDemands.set(demandId, { date, time, channelId: channelId || '' });
-
-        return {
-          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-          data: {
-            content: `${ISEE_EMOJI} The spirits have MARKED their calendars...\n\n**Tribute demand scheduled for ${date} at ${time}** (Stockholm time).\n\n*Note: Scheduled demands require the gateway bot to be running. For immediate demands, use \`/demand now\`.*`,
-          },
+          data: { content: demandMessage },
         };
       }
 
       return {
         type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
         data: {
-          content: `${ISEE_EMOJI} Unknown demand ritual. Use \`/demand now\` or \`/demand schedule\`.`,
+          content: `${ISEE_EMOJI} Use \`/demand now\` to trigger a tribute demand.`,
         },
       };
     }
 
-    // /tally command - View tribute stats and leaderboard
+    // /tally command
     case 'tally': {
       const subcommand = options[0]?.name || 'me';
 
       if (subcommand === 'me') {
         const [stats, allTimeBoard] = await Promise.all([
-          getFullUserStatsAsync(userId),
-          getAllTimeLeaderboardAsync(),
+          getFullUserStats(userId),
+          getAllTimeLeaderboard(50),
         ]);
         const rank = allTimeBoard.findIndex(e => e.userId === userId) + 1;
         const rankText = rank > 0 ? `#${rank} of ${allTimeBoard.length}` : 'Unranked';
@@ -272,9 +227,9 @@ async function handleApplicationCommand(
 
       if (subcommand === 'leaderboard') {
         const [allTimeRaw, dailyRaw, fridayRaw] = await Promise.all([
-          getAllTimeLeaderboardAsync(),
-          getDailyLeaderboardAsync(),
-          getFridayLeaderboardAsync(),
+          getAllTimeLeaderboard(50),
+          getDailyLeaderboard(20),
+          getFridayLeaderboard(20),
         ]);
         const allTime = allTimeRaw.slice(0, 10);
         const daily = dailyRaw.slice(0, 5);
@@ -320,7 +275,7 @@ async function handleApplicationCommand(
       };
     }
 
-    // Legacy /beer command - redirect to /tribute
+    // Legacy /beer command
     case 'beer': {
       const subcommand = options[0]?.name || 'status';
       let imageUrl: string | undefined;
@@ -333,7 +288,6 @@ async function handleApplicationCommand(
         }
       }
 
-      // Map old subcommands to new ones
       const subcommandMap: Record<string, string> = {
         post: 'offer',
         status: 'status',
@@ -341,7 +295,7 @@ async function handleApplicationCommand(
       };
 
       const mappedSubcommand = subcommandMap[subcommand] || subcommand;
-      const result = await handleTributeCommandAsync(mappedSubcommand, userId, username, guildId, imageUrl);
+      const result = await handleTributeCommand(mappedSubcommand, userId, username, guildId, imageUrl);
 
       return {
         type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
