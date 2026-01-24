@@ -42,7 +42,7 @@ export async function handleDrinkQuestion(question: string): Promise<{ content?:
 
   try {
     const genAI = new GoogleGenerativeAI(GOOGLE_AI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
     const chat = model.startChat({
       history: [
@@ -135,7 +135,7 @@ export async function handleRandomDrinkFact(): Promise<{ embeds: Embed[] }> {
 
   try {
     const genAI = new GoogleGenerativeAI(GOOGLE_AI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
     const topics = ['beer', 'wine', 'whiskey', 'cocktails', 'coffee', 'tea'];
     const randomTopic = topics[Math.floor(Math.random() * topics.length)];
