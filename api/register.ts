@@ -101,11 +101,11 @@ export default async function handler(
       return;
     }
 
-    const data = await response.json();
+    const data = await response.json() as { name: string; id: string }[];
     res.status(200).json({
       success: true,
       message: `Successfully registered ${data.length} commands`,
-      commands: data.map((cmd: { name: string; id: string }) => ({
+      commands: data.map((cmd) => ({
         name: cmd.name,
         id: cmd.id,
       })),
