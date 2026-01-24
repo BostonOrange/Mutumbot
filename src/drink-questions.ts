@@ -6,6 +6,7 @@
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
 import {
   MUTUMBOT_SYSTEM_PROMPT,
   MUTUMBOT_AWAKENING,
@@ -18,6 +19,7 @@ import {
 } from './services/conversationContext';
 
 const GOOGLE_AI_API_KEY = process.env.GOOGLE_AI_API_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 // Tribute scoring system
 export const TRIBUTE_SCORES = {
@@ -38,37 +40,10 @@ export interface ImageAnalysis {
 }
 
 /**
- * Analyze an image and generate a full AI response for the tribute
- * Used when receiving tribute images so Mutumbot can actually SEE and JUDGE them
+ * Build the image analysis prompt for AI models
  */
-export async function analyzeImage(
-  imageUrl: string,
-  userMessage?: string,
-  isFriday?: boolean,
-  isDM?: boolean
-): Promise<ImageAnalysis | null> {
-  if (!GOOGLE_AI_API_KEY) {
-    return null;
-  }
-
-  try {
-    // Fetch the image from Discord CDN
-    const response = await fetch(imageUrl);
-    if (!response.ok) {
-      console.error('Failed to fetch image:', response.status);
-      return null;
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    const base64 = Buffer.from(arrayBuffer).toString('base64');
-
-    // Get the mime type from the response
-    const contentType = response.headers.get('content-type') || 'image/jpeg';
-
-    const genAI = new GoogleGenerativeAI(GOOGLE_AI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
-
-    const prompt = `You are MUTUMBOT, an ancient and ominous tiki entity receiving a tribute offering.
+function buildImageAnalysisPrompt(userMessage?: string, isFriday?: boolean, isDM?: boolean): string {
+  return `You are MUTUMBOT, an ancient and ominous tiki entity receiving a tribute offering.
 
 Analyze this image and respond in EXACTLY this JSON format (no markdown, just raw JSON):
 {
@@ -98,42 +73,161 @@ ${isDM ? '- This is a private DM tribute - these remain between you and the mort
 ${userMessage ? `- The mortal who sent this said: "${userMessage}"` : ''}
 
 Keep your response mysterious and theatrical but not too long.`;
+}
 
-    const result = await model.generateContent([
-      {
-        inlineData: {
-          mimeType: contentType,
-          data: base64,
-        },
+/**
+ * Parse AI response JSON into ImageAnalysis
+ */
+function parseImageAnalysisResponse(responseText: string): ImageAnalysis | null {
+  try {
+    const parsed = JSON.parse(responseText.replace(/```json\n?|\n?```/g, ''));
+    const category = (['TIKI', 'COCKTAIL', 'BEER_WINE', 'OTHER'].includes(parsed.category)
+      ? parsed.category
+      : 'OTHER') as DrinkCategory;
+
+    return {
+      description: parsed.description || 'A mysterious offering',
+      category,
+      score: TRIBUTE_SCORES[category],
+      drinkName: parsed.drinkName || undefined,
+      response: parsed.response || undefined,
+    };
+  } catch {
+    console.error('Failed to parse image analysis JSON:', responseText);
+    return null;
+  }
+}
+
+/**
+ * Analyze image using Google Gemini
+ */
+async function analyzeImageWithGemini(
+  base64: string,
+  contentType: string,
+  prompt: string
+): Promise<ImageAnalysis | null> {
+  if (!GOOGLE_AI_API_KEY) {
+    return null;
+  }
+
+  const genAI = new GoogleGenerativeAI(GOOGLE_AI_API_KEY);
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
+
+  const result = await model.generateContent([
+    {
+      inlineData: {
+        mimeType: contentType,
+        data: base64,
       },
-      { text: prompt },
-    ]);
+    },
+    { text: prompt },
+  ]);
 
-    const responseText = result.response.text().trim();
+  const responseText = result.response.text().trim();
+  return parseImageAnalysisResponse(responseText);
+}
 
-    try {
-      // Parse the JSON response
-      const parsed = JSON.parse(responseText.replace(/```json\n?|\n?```/g, ''));
-      const category = (['TIKI', 'COCKTAIL', 'BEER_WINE', 'OTHER'].includes(parsed.category)
-        ? parsed.category
-        : 'OTHER') as DrinkCategory;
+/**
+ * Analyze image using OpenAI GPT-4o (fallback)
+ */
+async function analyzeImageWithOpenAI(
+  base64: string,
+  contentType: string,
+  prompt: string
+): Promise<ImageAnalysis | null> {
+  if (!OPENAI_API_KEY) {
+    return null;
+  }
 
-      return {
-        description: parsed.description || 'A mysterious offering',
-        category,
-        score: TRIBUTE_SCORES[category],
-        drinkName: parsed.drinkName || undefined,
-        response: parsed.response || undefined,
-      };
-    } catch {
-      // If JSON parsing fails, fall back to basic response
-      console.error('Failed to parse image analysis JSON:', responseText);
-      return {
-        description: responseText.slice(0, 200),
-        category: 'OTHER',
-        score: TRIBUTE_SCORES.OTHER,
-      };
+  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            image_url: {
+              url: `data:${contentType};base64,${base64}`,
+            },
+          },
+          {
+            type: 'text',
+            text: prompt,
+          },
+        ],
+      },
+    ],
+    max_tokens: 500,
+  });
+
+  const responseText = response.choices[0]?.message?.content?.trim();
+  if (!responseText) {
+    return null;
+  }
+
+  return parseImageAnalysisResponse(responseText);
+}
+
+/**
+ * Analyze an image and generate a full AI response for the tribute
+ * Uses Gemini as primary, falls back to OpenAI if Gemini fails (e.g., rate limit)
+ */
+export async function analyzeImage(
+  imageUrl: string,
+  userMessage?: string,
+  isFriday?: boolean,
+  isDM?: boolean
+): Promise<ImageAnalysis | null> {
+  // Need at least one AI provider
+  if (!GOOGLE_AI_API_KEY && !OPENAI_API_KEY) {
+    console.error('No AI API keys configured for image analysis');
+    return null;
+  }
+
+  try {
+    // Fetch the image from Discord CDN
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+      console.error('Failed to fetch image:', response.status);
+      return null;
     }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
+    const prompt = buildImageAnalysisPrompt(userMessage, isFriday, isDM);
+
+    // Try Gemini first (primary)
+    if (GOOGLE_AI_API_KEY) {
+      try {
+        const geminiResult = await analyzeImageWithGemini(base64, contentType, prompt);
+        if (geminiResult) {
+          console.log('Image analyzed with Gemini');
+          return geminiResult;
+        }
+      } catch (error) {
+        console.error('Gemini analysis failed, trying OpenAI fallback:', error);
+      }
+    }
+
+    // Fallback to OpenAI
+    if (OPENAI_API_KEY) {
+      try {
+        const openaiResult = await analyzeImageWithOpenAI(base64, contentType, prompt);
+        if (openaiResult) {
+          console.log('Image analyzed with OpenAI (fallback)');
+          return openaiResult;
+        }
+      } catch (error) {
+        console.error('OpenAI fallback also failed:', error);
+      }
+    }
+
+    console.error('All AI providers failed for image analysis');
+    return null;
   } catch (error) {
     console.error('Image analysis error:', error);
     return null;
