@@ -111,9 +111,9 @@ async function registerCommands(): Promise<void> {
       process.exit(1);
     }
 
-    const data = await response.json();
+    const data = await response.json() as { name: string; id: string }[];
     console.log(`Successfully registered ${data.length} commands:`);
-    data.forEach((cmd: { name: string; id: string }) => {
+    data.forEach((cmd) => {
       console.log(`  - /${cmd.name} (ID: ${cmd.id})`);
     });
 
