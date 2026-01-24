@@ -160,7 +160,7 @@ async function analyzeImageWithOpenAI(
         ],
       },
     ],
-    max_tokens: 500,
+    max_completion_tokens: 500,
   });
 
   const responseText = response.choices[0]?.message?.content?.trim();
@@ -314,7 +314,7 @@ async function chatWithOpenAI(
   const response = await openai.chat.completions.create({
     model: 'gpt-5-nano-2025-08-07',
     messages,
-    max_tokens: 1000,
+    max_completion_tokens: 1000,
   });
 
   return response.choices[0]?.message?.content || null;
@@ -440,7 +440,7 @@ async function generateWithOpenAI(prompt: string): Promise<string | null> {
   const response = await openai.chat.completions.create({
     model: 'gpt-5-nano-2025-08-07',
     messages: [{ role: 'user', content: prompt }],
-    max_tokens: 500,
+    max_completion_tokens: 500,
   });
 
   return response.choices[0]?.message?.content || null;
