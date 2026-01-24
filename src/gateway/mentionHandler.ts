@@ -12,13 +12,21 @@ import { handleMention, analyzeImage, TRIBUTE_SCORES, type ImageAnalysis } from 
 import {
   handleMentionTribute,
   getFullUserStats,
+  getFullUserStatsAsync,
   getPrivateDevotionStats,
+  getPrivateDevotionStatsAsync,
   recordTributePost,
   getLeaderboardContext,
+  getLeaderboardContextAsync,
   getFridayStatus,
+  getFridayStatusAsync,
   getAllTimeLeaderboard,
+  getAllTimeLeaderboardAsync,
   getDailyLeaderboard,
+  getDailyLeaderboardAsync,
   getFridayLeaderboard,
+  getFridayLeaderboardAsync,
+  getFridayStatsAsync,
   isFriday,
 } from '../tribute-tracker';
 import { ISEE_EMOJI, getRandomPhrase, NO_TRIBUTES_PHRASES, TRIBUTES_RECEIVED_STATUS } from '../personality';
@@ -127,29 +135,31 @@ export async function handleMentionMessage(message: Message): Promise<void> {
 
   // Check for status/tally related keywords
   if (isStatusQuery(cleanedContent)) {
-    const statusResponse = handleStatusQuery(userId, username, guildId, isDM);
+    const statusResponse = await handleStatusQueryAsync(userId, username, guildId, isDM);
     await message.reply(statusResponse);
     return;
   }
 
   // Check for personal stats queries
   if (isPersonalStatsQuery(cleanedContent)) {
-    const statsResponse = handlePersonalStatsQuery(userId, username);
+    const statsResponse = await handlePersonalStatsQueryAsync(userId, username);
     await message.reply(statsResponse);
     return;
   }
 
   // Check for leaderboard queries
   if (isLeaderboardQuery(cleanedContent)) {
-    const leaderboardResponse = handleLeaderboardQuery();
+    const leaderboardResponse = await handleLeaderboardQueryAsync();
     await message.reply(leaderboardResponse);
     return;
   }
 
   // General question/conversation - add user stats context so AI can answer stats questions
-  const stats = getFullUserStats(userId);
-  const privateStats = getPrivateDevotionStats(userId);
-  const leaderboard = getLeaderboardContext();
+  const [stats, privateStats, leaderboard] = await Promise.all([
+    getFullUserStatsAsync(userId),
+    getPrivateDevotionStatsAsync(userId),
+    getLeaderboardContextAsync(),
+  ]);
   addToContext(channelId, 'model', `[${username}'s current stats - All-time: ${stats.allTime.score}pts (${stats.allTime.count} tributes), Fridays: ${stats.friday.score}pts, Today: ${stats.daily.score}pts. Private devotion: ${privateStats.score}pts from ${privateStats.count} DM tributes. Scoring: Tiki=10pts, Cocktail=5pts, Beer/Wine=2pts, Other=1pt.]\n${leaderboard}`);
 
   const response = await handleMention(message.content, channelId);
@@ -193,26 +203,29 @@ function isLeaderboardQuery(content: string): boolean {
 }
 
 /**
- * Handle tribute status query
+ * Handle tribute status query (async, uses database)
  */
-function handleStatusQuery(userId: string, username: string, guildId: string, isDM: boolean): string {
-  const status = getFridayStatus(guildId);
+async function handleStatusQueryAsync(userId: string, username: string, guildId: string, isDM: boolean): Promise<string> {
+  const status = await getFridayStatusAsync(guildId);
   const fridayLabel = isFriday() ? 'this sacred Friday' : `Friday (${status.date})`;
 
   if (!status.hasTributePost) {
     return `${getRandomPhrase(NO_TRIBUTES_PHRASES)}\n\n**${fridayLabel}**: The offering hall stands EMPTY.${isFriday() ? '\n\nMention me with an image to make your offering!' : ''}`;
   }
 
-  const devotees = status.posts.map(p => {
-    const stats = getFullUserStats(p.userId);
-    const fridayS = getFridayLeaderboard().find(e => e.userId === p.userId);
-    return `  - ${p.username} (${stats.allTime.score}pts from ${stats.allTime.count} tributes | Fridays: ${fridayS?.score || 0}pts)`;
-  }).join('\n');
+  const devoteePromises = status.posts.map(async p => {
+    const [stats, fridayS] = await Promise.all([
+      getFullUserStatsAsync(p.userId),
+      getFridayStatsAsync(p.userId),
+    ]);
+    return `  - ${p.username} (${stats.allTime.score}pts from ${stats.allTime.count} tributes | Fridays: ${fridayS.score}pts)`;
+  });
+  const devotees = (await Promise.all(devoteePromises)).join('\n');
 
   let response = `${getRandomPhrase(TRIBUTES_RECEIVED_STATUS)}\n\n**${fridayLabel}**: ${status.posts.length} offering${status.posts.length !== 1 ? 's' : ''} recorded.\n\n**Devoted mortals:**\n${devotees}`;
 
   // Add leaderboard teaser
-  const leaderboard = getAllTimeLeaderboard();
+  const leaderboard = await getAllTimeLeaderboardAsync();
   if (leaderboard.length > 0) {
     const top = leaderboard[0];
     response += `\n\n${ISEE_EMOJI} **Most devoted:** <@${top.userId}> with ${top.score}pts from ${top.count} tributes`;
@@ -222,11 +235,13 @@ function handleStatusQuery(userId: string, username: string, guildId: string, is
 }
 
 /**
- * Handle personal stats query
+ * Handle personal stats query (async, uses database)
  */
-function handlePersonalStatsQuery(userId: string, username: string): string {
-  const stats = getFullUserStats(userId);
-  const allTimeBoard = getAllTimeLeaderboard();
+async function handlePersonalStatsQueryAsync(userId: string, username: string): Promise<string> {
+  const [stats, allTimeBoard] = await Promise.all([
+    getFullUserStatsAsync(userId),
+    getAllTimeLeaderboardAsync(),
+  ]);
   const rank = allTimeBoard.findIndex(e => e.userId === userId) + 1;
   const rankText = rank > 0 ? `#${rank} of ${allTimeBoard.length}` : 'Unranked';
 
@@ -239,12 +254,17 @@ function handlePersonalStatsQuery(userId: string, username: string): string {
 }
 
 /**
- * Handle leaderboard query
+ * Handle leaderboard query (async, uses database)
  */
-function handleLeaderboardQuery(): string {
-  const allTime = getAllTimeLeaderboard().slice(0, 10);
-  const daily = getDailyLeaderboard().slice(0, 5);
-  const friday = getFridayLeaderboard().slice(0, 5);
+async function handleLeaderboardQueryAsync(): Promise<string> {
+  const [allTimeRaw, dailyRaw, fridayRaw] = await Promise.all([
+    getAllTimeLeaderboardAsync(),
+    getDailyLeaderboardAsync(),
+    getFridayLeaderboardAsync(),
+  ]);
+  const allTime = allTimeRaw.slice(0, 10);
+  const daily = dailyRaw.slice(0, 5);
+  const friday = fridayRaw.slice(0, 5);
 
   let content = `${ISEE_EMOJI} **THE SPIRITS REVEAL THE DEVOTED...**\n\n`;
 

@@ -8,6 +8,7 @@
 import { Client, GatewayIntentBits, Events, Partials } from 'discord.js';
 import { handleMentionMessage } from './mentionHandler';
 import { startFridayCron, postImmediateDemand } from './fridayCron';
+import { initializeDatabase, isDatabaseAvailable } from '../db';
 
 // Environment variables
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -35,6 +36,15 @@ client.once(Events.ClientReady, async readyClient => {
   console.log(`MUTUMBOT AWAKENS...`);
   console.log(`Logged in as ${readyClient.user.tag}`);
   console.log(`Serving ${readyClient.guilds.cache.size} guild(s)`);
+
+  // Initialize database for persistent storage
+  try {
+    await initializeDatabase();
+    console.log(`Database: ${isDatabaseAvailable() ? 'Connected (Neon DB)' : 'Not available (using in-memory fallback)'}`);
+  } catch (error) {
+    console.error('Database initialization failed:', error);
+    console.log('Continuing with in-memory storage...');
+  }
 
   // Start Friday cron job if party channel is configured
   if (PARTY_CHANNEL_ID) {

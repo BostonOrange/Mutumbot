@@ -13,12 +13,13 @@ import {
   InteractionResponse,
 } from '../src/types';
 import {
-  handleTributeCommand,
-  getFullUserStats,
-  getAllTimeLeaderboard,
-  getDailyLeaderboard,
-  getFridayLeaderboard,
+  handleTributeCommandAsync,
+  getFullUserStatsAsync,
+  getAllTimeLeaderboardAsync,
+  getDailyLeaderboardAsync,
+  getFridayLeaderboardAsync,
 } from '../src/tribute-tracker';
+import { initializeDatabase } from '../src/db';
 import {
   handleDrinkQuestion,
   handleDrinkList,
@@ -74,6 +75,14 @@ export default async function handler(
     return;
   }
 
+  // Initialize database (creates tables if needed)
+  try {
+    await initializeDatabase();
+  } catch (err) {
+    console.error('Database initialization failed:', err);
+    // Continue anyway - will fall back to in-memory storage
+  }
+
   // Handle Application Commands (slash commands)
   if (interaction.type === InteractionType.APPLICATION_COMMAND) {
     const response = await handleApplicationCommand(interaction);
@@ -114,7 +123,7 @@ async function handleApplicationCommand(
         }
       }
 
-      const result = handleTributeCommand(subcommand, userId, username, guildId, imageUrl);
+      const result = await handleTributeCommandAsync(subcommand, userId, username, guildId, imageUrl);
 
       return {
         type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -218,7 +227,7 @@ async function handleApplicationCommand(
 
         // Store the scheduled demand (note: in-memory, won't persist across deploys)
         const demandId = `${guildId}-${Date.now()}`;
-        scheduledDemands.set(demandId, { date, time, channelId });
+        scheduledDemands.set(demandId, { date, time, channelId: channelId || '' });
 
         return {
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -241,8 +250,10 @@ async function handleApplicationCommand(
       const subcommand = options[0]?.name || 'me';
 
       if (subcommand === 'me') {
-        const stats = getFullUserStats(userId);
-        const allTimeBoard = getAllTimeLeaderboard();
+        const [stats, allTimeBoard] = await Promise.all([
+          getFullUserStatsAsync(userId),
+          getAllTimeLeaderboardAsync(),
+        ]);
         const rank = allTimeBoard.findIndex(e => e.userId === userId) + 1;
         const rankText = rank > 0 ? `#${rank} of ${allTimeBoard.length}` : 'Unranked';
 
@@ -260,9 +271,14 @@ async function handleApplicationCommand(
       }
 
       if (subcommand === 'leaderboard') {
-        const allTime = getAllTimeLeaderboard().slice(0, 10);
-        const daily = getDailyLeaderboard().slice(0, 5);
-        const friday = getFridayLeaderboard().slice(0, 5);
+        const [allTimeRaw, dailyRaw, fridayRaw] = await Promise.all([
+          getAllTimeLeaderboardAsync(),
+          getDailyLeaderboardAsync(),
+          getFridayLeaderboardAsync(),
+        ]);
+        const allTime = allTimeRaw.slice(0, 10);
+        const daily = dailyRaw.slice(0, 5);
+        const friday = fridayRaw.slice(0, 5);
 
         let content = `${ISEE_EMOJI} **THE SPIRITS REVEAL THE DEVOTED...**\n\n`;
 
@@ -325,7 +341,7 @@ async function handleApplicationCommand(
       };
 
       const mappedSubcommand = subcommandMap[subcommand] || subcommand;
-      const result = handleTributeCommand(mappedSubcommand, userId, username, guildId, imageUrl);
+      const result = await handleTributeCommandAsync(mappedSubcommand, userId, username, guildId, imageUrl);
 
       return {
         type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
