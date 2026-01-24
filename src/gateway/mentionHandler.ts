@@ -38,8 +38,11 @@ export async function handleMentionMessage(message: Message): Promise<void> {
   const isDM = !message.guild;
 
   // Check for image attachments
+  // Note: contentType can be null/undefined for some Discord attachments,
+  // so we also check the URL for common image extensions as fallback
   const imageAttachment = message.attachments.find(att =>
-    att.contentType?.startsWith('image/')
+    att.contentType?.startsWith('image/') ||
+    /\.(png|jpg|jpeg|gif|webp)($|\?)/i.test(att.url)
   );
 
   // Check if today is Friday
