@@ -1,9 +1,12 @@
 /**
  * Tribute Tracker
  *
- * Tracks tribute offerings to Mutumbot, the ancient tiki entity.
- * Mortals prove their devotion by sharing images of their libations.
- * Tributes are accepted any day, but Fridays are SACRED.
+ * The ancient tiki god tracks ALL offerings across multiple categories:
+ * - All-time tributes (running tally)
+ * - Daily tributes
+ * - Friday sacred tributes
+ *
+ * The god randomly praises devoted followers and condemns the lazy!
  */
 
 import { TributePost, FridayStatus } from './types';
@@ -17,25 +20,39 @@ import {
   TRIBUTES_RECEIVED_STATUS,
 } from './personality';
 
-// In-memory storage (for production, use a database like Vercel KV or Upstash Redis)
-const tributePosts: Map<string, TributePost[]> = new Map();
+// ============ STORAGE ============
+// In-memory storage (for production, use a database like Upstash Redis)
 
-// Track total tributes per user (persists across weeks)
-const userTributeTally: Map<string, number> = new Map();
+// Weekly Friday posts (keyed by Friday date)
+const fridayPosts: Map<string, TributePost[]> = new Map();
+
+// All-time tribute count per user
+const allTimeTally: Map<string, number> = new Map();
+
+// Today's tribute count per user (keyed by date)
+const dailyTally: Map<string, Map<string, number>> = new Map();
+
+// Friday-specific tribute count per user (only counts Friday tributes)
+const fridayTally: Map<string, number> = new Map();
+
+// ============ DATE HELPERS ============
 
 /**
- * Get the current Friday's date key (YYYY-MM-DD format)
+ * Get today's date key (YYYY-MM-DD)
+ */
+function getTodayKey(): string {
+  return new Date().toISOString().split('T')[0];
+}
+
+/**
+ * Get the current/most recent Friday's date key
  */
 export function getCurrentFridayKey(): string {
   const now = new Date();
   const dayOfWeek = now.getDay();
-
-  // If it's Friday (5), use today
-  // Otherwise, find the most recent Friday
   const daysToSubtract = dayOfWeek >= 5 ? dayOfWeek - 5 : dayOfWeek + 2;
   const friday = new Date(now);
   friday.setDate(friday.getDate() - daysToSubtract);
-
   return friday.toISOString().split('T')[0];
 }
 
@@ -46,43 +63,129 @@ export function isFriday(): boolean {
   return new Date().getDay() === 5;
 }
 
+// ============ TRIBUTE RECORDING ============
+
 /**
- * Record a tribute offering and update tally
+ * Record a tribute and update all tallies
  */
 export function recordTributePost(post: TributePost): void {
-  const key = getCurrentFridayKey();
-  const posts = tributePosts.get(key) || [];
+  const todayKey = getTodayKey();
+  const fridayKey = getCurrentFridayKey();
+
+  // Record in Friday posts (for weekly tracking)
+  const posts = fridayPosts.get(fridayKey) || [];
   posts.push(post);
-  tributePosts.set(key, posts);
+  fridayPosts.set(fridayKey, posts);
 
-  // Update user's total tally
-  const currentTally = userTributeTally.get(post.userId) || 0;
-  userTributeTally.set(post.userId, currentTally + 1);
+  // Update all-time tally
+  const currentAllTime = allTimeTally.get(post.userId) || 0;
+  allTimeTally.set(post.userId, currentAllTime + 1);
+
+  // Update daily tally
+  if (!dailyTally.has(todayKey)) {
+    dailyTally.set(todayKey, new Map());
+  }
+  const todayMap = dailyTally.get(todayKey)!;
+  const currentDaily = todayMap.get(post.userId) || 0;
+  todayMap.set(post.userId, currentDaily + 1);
+
+  // Update Friday tally (only if it's Friday)
+  if (isFriday()) {
+    const currentFriday = fridayTally.get(post.userId) || 0;
+    fridayTally.set(post.userId, currentFriday + 1);
+  }
 }
 
-/**
- * Get a user's total tribute count
- */
-export function getUserTributeCount(userId: string): number {
-  return userTributeTally.get(userId) || 0;
+// ============ TALLY GETTERS ============
+
+export function getAllTimeTribute(userId: string): number {
+  return allTimeTally.get(userId) || 0;
 }
 
-/**
- * Get the tribute leaderboard
- */
-export function getTributeLeaderboard(limit: number = 5): Array<{ odId: string; count: number }> {
-  return Array.from(userTributeTally.entries())
+export function getDailyTribute(userId: string): number {
+  const todayKey = getTodayKey();
+  const todayMap = dailyTally.get(todayKey);
+  return todayMap?.get(userId) || 0;
+}
+
+export function getFridayTribute(userId: string): number {
+  return fridayTally.get(userId) || 0;
+}
+
+// ============ LEADERBOARDS ============
+
+export function getAllTimeLeaderboard(): Array<{ odId: string; count: number }> {
+  return Array.from(allTimeTally.entries())
     .sort((a, b) => b[1] - a[1])
-    .slice(0, limit)
     .map(([odId, count]) => ({ odId, count }));
 }
 
+export function getDailyLeaderboard(): Array<{ userId: string; count: number }> {
+  const todayKey = getTodayKey();
+  const todayMap = dailyTally.get(todayKey);
+  if (!todayMap) return [];
+
+  return Array.from(todayMap.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([userId, count]) => ({ userId, count }));
+}
+
+export function getFridayLeaderboard(): Array<{ userId: string; count: number }> {
+  return Array.from(fridayTally.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([userId, count]) => ({ userId, count }));
+}
+
+// ============ RANDOM PRAISE/CONDEMNATION ============
+
+const PRAISE_PHRASES = [
+  `${ISEE_EMOJI} The spirits SMILE upon **TOP_USER** who leads with **COUNT** tributes!`,
+  `${ISEE_EMOJI} **TOP_USER** has proven their devotion with **COUNT** offerings. The ancients are PLEASED.`,
+  `${ISEE_EMOJI} BEHOLD! **TOP_USER** stands as the most devoted with **COUNT** tributes!`,
+  `${ISEE_EMOJI} The tiki gods FAVOR **TOP_USER**... **COUNT** tributes speak of TRUE dedication.`,
+];
+
+const CONDEMNATION_PHRASES = [
+  `${ISEE_EMOJI} The spirits grow RESTLESS... **LAZY_USER** has offered only **COUNT** tribute. SHAMEFUL.`,
+  `${ISEE_EMOJI} **LAZY_USER**... the ancients have NOTICED your **COUNT** measly offering. Do better.`,
+  `${ISEE_EMOJI} I SEE you, **LAZY_USER**. Only **COUNT** tribute? The spirits are... DISAPPOINTED.`,
+  `${ISEE_EMOJI} **LAZY_USER** lurks in the shadows with only **COUNT** offering. The gods REMEMBER.`,
+];
+
 /**
- * Get the status for the current Friday
+ * Maybe generate random praise or condemnation (30% chance)
  */
+function maybeGetRandomComment(): string | null {
+  if (Math.random() > 0.3) return null; // 70% of the time, no comment
+
+  const leaderboard = getAllTimeLeaderboard();
+  if (leaderboard.length < 2) return null;
+
+  // 60% praise, 40% condemn
+  if (Math.random() < 0.6) {
+    // Praise the top tributor
+    const top = leaderboard[0];
+    const phrase = getRandomPhrase(PRAISE_PHRASES);
+    return phrase.replace('TOP_USER', `<@${top.odId}>`).replace('COUNT', String(top.count));
+  } else {
+    // Condemn the lowest (only if they have at least 1 tribute - don't call out people who never participated)
+    const activeTributors = leaderboard.filter(u => u.count > 0);
+    if (activeTributors.length < 2) return null;
+
+    const lowest = activeTributors[activeTributors.length - 1];
+    // Don't condemn if they're tied with the top
+    if (lowest.count === leaderboard[0].count) return null;
+
+    const phrase = getRandomPhrase(CONDEMNATION_PHRASES);
+    return phrase.replace('LAZY_USER', `<@${lowest.odId}>`).replace('COUNT', String(lowest.count));
+  }
+}
+
+// ============ FRIDAY STATUS ============
+
 export function getFridayStatus(guildId: string): FridayStatus {
   const key = getCurrentFridayKey();
-  const allPosts = tributePosts.get(key) || [];
+  const allPosts = fridayPosts.get(key) || [];
   const guildPosts = allPosts.filter(p => p.guildId === guildId);
 
   return {
@@ -92,18 +195,23 @@ export function getFridayStatus(guildId: string): FridayStatus {
   };
 }
 
-/**
- * Check if a user has already offered tribute this Friday
- */
 export function hasUserOfferedTribute(userId: string, guildId: string): boolean {
   const key = getCurrentFridayKey();
-  const allPosts = tributePosts.get(key) || [];
+  const allPosts = fridayPosts.get(key) || [];
   return allPosts.some(p => p.userId === userId && p.guildId === guildId);
 }
 
-/**
- * Generate a response for the /tribute command
- */
+// ============ RESPONSE PHRASES ============
+
+const NON_FRIDAY_TRIBUTE_PHRASES = [
+  `${ISEE_EMOJI} An offering outside the sacred Friday? Your devotion is... NOTED.`,
+  `${ISEE_EMOJI} The spirits did not DEMAND this tribute... but they accept it nonetheless.`,
+  `${ISEE_EMOJI} UNEXPECTED... but welcome. Your offering pleases the ancient ones.`,
+  `${ISEE_EMOJI} A tribute on a common day? You seek FAVOR with the spirits...`,
+];
+
+// ============ COMMAND HANDLERS ============
+
 export function handleTributeCommand(
   subcommand: string,
   userId: string,
@@ -122,11 +230,12 @@ export function handleTributeCommand(
         guildId,
       });
 
-      const totalTributes = getUserTributeCount(userId);
+      const allTime = getAllTimeTribute(userId);
+      const daily = getDailyTribute(userId);
+      const fridayCount = getFridayTribute(userId);
       const isTiki = messageContent ? isTikiRelated(messageContent) : false;
       const isSpecialDay = isFriday();
 
-      // Build response based on context
       let response: string;
 
       if (isTiki && imageUrl) {
@@ -139,15 +248,23 @@ export function handleTributeCommand(
         };
       }
 
-      // Add Friday bonus message
+      // Add context based on day
       if (isSpecialDay) {
         response += `\n\n**${username}** honors the SACRED FRIDAY RITUAL!`;
+        response += `\n*Today: ${daily} | Fridays: ${fridayCount} | All-time: ${allTime}*`;
       } else {
         response += `\n\n**${username}**'s tribute has been recorded.`;
+        response += `\n*Today: ${daily} | All-time: ${allTime}*`;
       }
 
-      // Add tally
-      response += `\n*Total tributes from this devotee: ${totalTributes}*`;
+      // Maybe add random praise/condemnation
+      const randomComment = maybeGetRandomComment();
+      if (randomComment) {
+        response += `\n\n${randomComment}`;
+      }
+
+      // Milestone messages
+      response += getMilestoneMessage(allTime);
 
       return { content: response };
     }
@@ -163,13 +280,21 @@ export function handleTributeCommand(
       }
 
       const devotees = status.posts.map(p => {
-        const total = getUserTributeCount(p.userId);
-        return `  - ${p.username} (${total} total)`;
+        const allTime = getAllTimeTribute(p.userId);
+        const fridayCount = getFridayTribute(p.userId);
+        return `  - ${p.username} (All-time: ${allTime} | Fridays: ${fridayCount})`;
       }).join('\n');
 
-      return {
-        content: `${getRandomPhrase(TRIBUTES_RECEIVED_STATUS)}\n\n**${fridayLabel}**: ${status.posts.length} offering${status.posts.length !== 1 ? 's' : ''} recorded.\n\n**Devoted mortals:**\n${devotees}`,
-      };
+      let response = `${getRandomPhrase(TRIBUTES_RECEIVED_STATUS)}\n\n**${fridayLabel}**: ${status.posts.length} offering${status.posts.length !== 1 ? 's' : ''} recorded.\n\n**Devoted mortals:**\n${devotees}`;
+
+      // Add leaderboard teaser
+      const leaderboard = getAllTimeLeaderboard();
+      if (leaderboard.length > 0) {
+        const top = leaderboard[0];
+        response += `\n\n${ISEE_EMOJI} **Most devoted:** <@${top.odId}> with ${top.count} total tributes`;
+      }
+
+      return { content: response };
     }
 
     case 'demand': {
@@ -199,18 +324,7 @@ export function handleTributeCommand(
 }
 
 /**
- * Phrases for non-Friday tributes (still accepted, just different vibe)
- */
-const NON_FRIDAY_TRIBUTE_PHRASES = [
-  `${ISEE_EMOJI} An offering outside the sacred Friday? Your devotion is... NOTED.`,
-  `${ISEE_EMOJI} The spirits did not DEMAND this tribute... but they accept it nonetheless.`,
-  `${ISEE_EMOJI} UNEXPECTED... but welcome. Your offering pleases the ancient ones.`,
-  `${ISEE_EMOJI} A tribute on a common day? You seek FAVOR with the spirits...`,
-];
-
-/**
  * Handle a tribute via @mention with image attachment
- * Used by the gateway bot - accepts tributes ANY day
  */
 export function handleMentionTribute(
   userId: string,
@@ -219,7 +333,6 @@ export function handleMentionTribute(
   imageUrl: string,
   messageContent?: string
 ): { content: string } {
-  // Record the tribute (any day now!)
   recordTributePost({
     userId,
     username,
@@ -228,13 +341,14 @@ export function handleMentionTribute(
     guildId,
   });
 
-  const totalTributes = getUserTributeCount(userId);
+  const allTime = getAllTimeTribute(userId);
+  const daily = getDailyTribute(userId);
+  const fridayCount = getFridayTribute(userId);
   const isTiki = messageContent ? isTikiRelated(messageContent) : false;
   const isSpecialDay = isFriday();
 
   let response: string;
 
-  // Different responses for Friday vs other days
   if (isSpecialDay) {
     // Friday - extra dramatic!
     if (isTiki) {
@@ -243,29 +357,46 @@ export function handleMentionTribute(
       response = getRandomPhrase(TRIBUTE_RECEIVED_PHRASES);
     }
     response += `\n\n**${username}** honors the SACRED FRIDAY RITUAL!`;
+    response += `\n*Today: ${daily} | Fridays: ${fridayCount} | All-time: ${allTime}*`;
   } else {
-    // Non-Friday - still accepted but different vibe
+    // Non-Friday
     if (isTiki) {
       response = `${ISEE_EMOJI} A TIKI OFFERING outside the sacred Friday? Your devotion runs DEEP, **${username}**...`;
     } else {
       response = getRandomPhrase(NON_FRIDAY_TRIBUTE_PHRASES);
       response += `\n\n**${username}**'s tribute has been recorded.`;
     }
+    response += `\n*Today: ${daily} | All-time: ${allTime}*`;
   }
 
-  // Add tally
-  response += `\n*Total tributes: ${totalTributes}*`;
+  // Maybe add random praise/condemnation
+  const randomComment = maybeGetRandomComment();
+  if (randomComment) {
+    response += `\n\n${randomComment}`;
+  }
 
   // Milestone messages
-  if (totalTributes === 5) {
-    response += `\n\n${ISEE_EMOJI} **FIVE TRIBUTES!** You have proven your devotion, mortal.`;
-  } else if (totalTributes === 10) {
-    response += `\n\n${ISEE_EMOJI} **TEN TRIBUTES!** The spirits recognize you as a TRUE DEVOTEE.`;
-  } else if (totalTributes === 25) {
-    response += `\n\n${ISEE_EMOJI} **TWENTY-FIVE TRIBUTES!** You have ascended to TIKI ELDER status!`;
-  } else if (totalTributes === 50) {
-    response += `\n\n${ISEE_EMOJI} **FIFTY TRIBUTES!** The ancient ones BOW before your dedication!`;
-  }
+  response += getMilestoneMessage(allTime);
 
   return { content: response };
+}
+
+/**
+ * Get milestone message if applicable
+ */
+function getMilestoneMessage(totalTributes: number): string {
+  switch (totalTributes) {
+    case 5:
+      return `\n\n${ISEE_EMOJI} **FIVE TRIBUTES!** You have proven your devotion, mortal.`;
+    case 10:
+      return `\n\n${ISEE_EMOJI} **TEN TRIBUTES!** The spirits recognize you as a TRUE DEVOTEE.`;
+    case 25:
+      return `\n\n${ISEE_EMOJI} **TWENTY-FIVE TRIBUTES!** You have ascended to TIKI ELDER status!`;
+    case 50:
+      return `\n\n${ISEE_EMOJI} **FIFTY TRIBUTES!** The ancient ones BOW before your dedication!`;
+    case 100:
+      return `\n\n${ISEE_EMOJI} **ONE HUNDRED TRIBUTES!** You have achieved TIKI IMMORTALITY! Legends speak of your name!`;
+    default:
+      return '';
+  }
 }

@@ -7,7 +7,7 @@
 
 import { Client, GatewayIntentBits, Events, Partials } from 'discord.js';
 import { handleMentionMessage } from './mentionHandler';
-import { startFridayCron, postImmediateDemand } from './fridayCron';
+import { startFridayCron } from './fridayCron';
 
 // Environment variables
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -39,10 +39,6 @@ client.once(Events.ClientReady, readyClient => {
   if (PARTY_CHANNEL_ID) {
     startFridayCron(client, PARTY_CHANNEL_ID);
     console.log(`Friday tribute demands will be posted to channel: ${PARTY_CHANNEL_ID}`);
-
-    // Post an immediate demand for testing (remove this line after testing)
-    console.log('Posting immediate test demand...');
-    postImmediateDemand(client, PARTY_CHANNEL_ID);
   } else {
     console.log('No PARTY_CHANNEL_ID configured - Friday auto-demands disabled');
   }
