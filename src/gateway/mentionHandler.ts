@@ -8,17 +8,24 @@
  */
 
 import { Message } from 'discord.js';
-import { handleMention, analyzeImage } from '../drink-questions';
+import { handleMention, analyzeImage, TRIBUTE_SCORES, type ImageAnalysis } from '../drink-questions';
 import {
   handleMentionTribute,
-  getAllTimeTribute,
-  getDailyTribute,
-  getFridayTribute,
-  getPrivateDevotion,
+  getFullUserStats,
+  getPrivateDevotionStats,
   recordTributePost,
+  getLeaderboardContext,
 } from '../tribute-tracker';
 import { ISEE_EMOJI } from '../personality';
 import { addToContext } from '../services/conversationContext';
+
+// Category labels for context
+const CATEGORY_LABELS: Record<string, string> = {
+  TIKI: 'Tiki (10pts)',
+  COCKTAIL: 'Cocktail (5pts)',
+  BEER_WINE: 'Beer/Wine (2pts)',
+  OTHER: 'Other (1pt)',
+};
 
 /**
  * Handle a message that mentions Mutumbot
@@ -37,22 +44,25 @@ export async function handleMentionMessage(message: Message): Promise<void> {
 
   // If there's an image, treat as a tribute (any day!)
   if (imageAttachment) {
-    // Analyze the image so Mutumbot actually SEES it
-    const imageDescription = await analyzeImage(imageAttachment.url, message.content);
+    // Analyze the image so Mutumbot actually SEES and JUDGES it
+    const imageAnalysis = await analyzeImage(imageAttachment.url, message.content);
 
-    // Store the user's message and image description in context for follow-up questions
+    // Store the user's message and image analysis in context for follow-up questions
     const userContextMessage = message.content
       ? `[Sent an image with message: "${message.content.replace(/<@!?\d+>/g, '').trim()}"]`
       : '[Sent an image as tribute]';
     addToContext(channelId, 'user', userContextMessage);
 
-    if (imageDescription) {
-      // Store what Mutumbot saw in context
-      addToContext(channelId, 'model', `[I observed this image: ${imageDescription}]`);
+    if (imageAnalysis) {
+      // Store what Mutumbot saw + the scoring in context
+      const categoryLabel = CATEGORY_LABELS[imageAnalysis.category] || imageAnalysis.category;
+      addToContext(channelId, 'model', `[I observed this image: ${imageAnalysis.description}. Category: ${categoryLabel}${imageAnalysis.drinkName ? `, identified as: ${imageAnalysis.drinkName}` : ''}. Worth ${imageAnalysis.score} points.]`);
     }
 
     // DM tributes go to private devotion tally (separate from competitive leaderboard)
     if (isDM) {
+      const score = imageAnalysis?.score || TRIBUTE_SCORES.OTHER;
+
       // Record the DM tribute to private devotion
       recordTributePost({
         userId,
@@ -60,44 +70,45 @@ export async function handleMentionMessage(message: Message): Promise<void> {
         timestamp: new Date().toISOString(),
         imageUrl: imageAttachment.url,
         guildId: 'dm',
-      });
+      }, score);
 
-      // Get all their counts
-      const privateDevotion = getPrivateDevotion(userId);
-      const publicAllTime = getAllTimeTribute(userId);
-      const publicFriday = getFridayTribute(userId);
+      // Get all their stats
+      const privateStats = getPrivateDevotionStats(userId);
+      const publicStats = getFullUserStats(userId);
 
       let dmResponse = `${ISEE_EMOJI} I SEE your private offering, **${username}**...`;
 
-      if (imageDescription) {
-        dmResponse += ` ${imageDescription}`;
+      if (imageAnalysis) {
+        dmResponse += ` ${imageAnalysis.description}`;
+        const categoryLabel = CATEGORY_LABELS[imageAnalysis.category] || imageAnalysis.category;
+        dmResponse += `\n\n**+${score}pts** (${categoryLabel}${imageAnalysis.drinkName ? `: ${imageAnalysis.drinkName}` : ''})`;
       }
 
       dmResponse += `\n\nThe spirits acknowledge your devotion.`;
-      dmResponse += `\n*Private devotion: ${privateDevotion} | Public tributes: ${publicAllTime}*`;
+      dmResponse += `\n*Private devotion: ${privateStats.score}pts (${privateStats.count} tributes) | Public: ${publicStats.allTime.score}pts*`;
       dmResponse += `\n\n*DM tributes are between you and the gods alone - they do not count toward the public leaderboard. Tribute in the sacred channels to compete with other mortals!*`;
 
-      // Add their tribute count info to context so AI can answer follow-up questions
-      addToContext(channelId, 'model', `[${username}'s tribute counts - Private devotion (DMs): ${privateDevotion}, Public channel tributes: ${publicAllTime} (${publicFriday} on Fridays). DM tributes are tracked separately and don't count toward the competitive leaderboard.]`);
+      // Add comprehensive stats to context for AI
+      addToContext(channelId, 'model', `[${username}'s stats - Private devotion: ${privateStats.score}pts from ${privateStats.count} DM tributes. Public channel: ${publicStats.allTime.score}pts from ${publicStats.allTime.count} tributes (${publicStats.friday.score}pts on Fridays). Scoring: Tiki=10pts, Cocktail=5pts, Beer/Wine=2pts, Other=1pt. DM tributes don't count toward public leaderboard.]`);
 
       await message.reply(dmResponse);
       return;
     }
 
+    // Public channel tribute
     const result = handleMentionTribute(
       userId,
       username,
       guildId,
       imageAttachment.url,
       message.content,
-      imageDescription || undefined
+      imageAnalysis || undefined
     );
 
-    // Add tribute count info to context so AI can answer follow-up questions
-    const allTime = getAllTimeTribute(userId);
-    const daily = getDailyTribute(userId);
-    const fridayCount = getFridayTribute(userId);
-    addToContext(channelId, 'model', `[${username} now has ${allTime} total tribute(s), ${daily} today, ${fridayCount} on Fridays.]`);
+    // Add comprehensive stats + leaderboard info to context
+    const stats = getFullUserStats(userId);
+    const leaderboard = getLeaderboardContext();
+    addToContext(channelId, 'model', `[${username}'s updated stats - Today: ${stats.daily.score}pts (${stats.daily.count} tributes), Fridays: ${stats.friday.score}pts, All-time: ${stats.allTime.score}pts (${stats.allTime.count} tributes). Scoring: Tiki=10pts, Cocktail=5pts, Beer/Wine=2pts, Other=1pt.]\n${leaderboard}`);
 
     await message.reply(result.content);
     return;

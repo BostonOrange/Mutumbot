@@ -19,14 +19,31 @@ import {
 
 const GOOGLE_AI_API_KEY = process.env.GOOGLE_AI_API_KEY;
 
+// Tribute scoring system
+export const TRIBUTE_SCORES = {
+  TIKI: 10,      // Tiki drinks (Mai Tai, Zombie, Painkiller, etc.)
+  COCKTAIL: 5,   // Other cocktails
+  BEER_WINE: 2,  // Beer, wine, basic drinks
+  OTHER: 1,      // Non-drink offerings (still acknowledged)
+} as const;
+
+export type DrinkCategory = 'TIKI' | 'COCKTAIL' | 'BEER_WINE' | 'OTHER';
+
+export interface ImageAnalysis {
+  description: string;
+  category: DrinkCategory;
+  score: number;
+  drinkName?: string;
+}
+
 /**
- * Analyze an image and return a description
- * Used when receiving tribute images so Mutumbot can actually SEE them
+ * Analyze an image and return description + scoring
+ * Used when receiving tribute images so Mutumbot can actually SEE and JUDGE them
  */
 export async function analyzeImage(
   imageUrl: string,
   userMessage?: string
-): Promise<string | null> {
+): Promise<ImageAnalysis | null> {
   if (!GOOGLE_AI_API_KEY) {
     return null;
   }
@@ -49,17 +66,22 @@ export async function analyzeImage(
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
 
     const prompt = `You are MUTUMBOT, an ancient tiki entity receiving a tribute image.
-Describe what you SEE in this image in 1-2 sentences, focusing on:
-- What drink/beverage is shown (if any)
-- The vessel/glass/mug it's in
-- Any notable details (tiki mugs, garnishes, tropical elements)
-- The setting/background if relevant
 
-If it's NOT a drink, describe what you see anyway.
-Be specific about details you observe. Do NOT make up things that aren't visible.
-${userMessage ? `The mortal who sent this said: "${userMessage}"` : ''}
+Analyze this image and respond in EXACTLY this JSON format (no markdown, just raw JSON):
+{
+  "description": "1-2 sentence description of what you see",
+  "category": "TIKI" or "COCKTAIL" or "BEER_WINE" or "OTHER",
+  "drinkName": "name of the drink if identifiable, or null"
+}
 
-Respond ONLY with your observation, no greeting or persona - that will be added separately.`;
+CATEGORY RULES:
+- TIKI: Tiki drinks (Mai Tai, Zombie, Painkiller, Hurricane, Scorpion, Navy Grog, Jungle Bird, etc.), drinks in tiki mugs, tropical cocktails with rum and exotic garnishes
+- COCKTAIL: Other mixed drinks, cocktails, spirits (margarita, martini, old fashioned, whiskey sour, etc.)
+- BEER_WINE: Beer, wine, cider, hard seltzer, simple drinks
+- OTHER: Non-alcoholic drinks, food, or anything that's not a beverage
+
+Be specific in your description. Focus on the drink, vessel, and garnishes.
+${userMessage ? `The mortal who sent this said: "${userMessage}"` : ''}`;
 
     const result = await model.generateContent([
       {
@@ -71,7 +93,30 @@ Respond ONLY with your observation, no greeting or persona - that will be added 
       { text: prompt },
     ]);
 
-    return result.response.text().trim();
+    const responseText = result.response.text().trim();
+
+    try {
+      // Parse the JSON response
+      const parsed = JSON.parse(responseText.replace(/```json\n?|\n?```/g, ''));
+      const category = (['TIKI', 'COCKTAIL', 'BEER_WINE', 'OTHER'].includes(parsed.category)
+        ? parsed.category
+        : 'OTHER') as DrinkCategory;
+
+      return {
+        description: parsed.description || 'A mysterious offering',
+        category,
+        score: TRIBUTE_SCORES[category],
+        drinkName: parsed.drinkName || undefined,
+      };
+    } catch {
+      // If JSON parsing fails, fall back to basic response
+      console.error('Failed to parse image analysis JSON:', responseText);
+      return {
+        description: responseText.slice(0, 200),
+        category: 'OTHER',
+        score: TRIBUTE_SCORES.OTHER,
+      };
+    }
   } catch (error) {
     console.error('Image analysis error:', error);
     return null;

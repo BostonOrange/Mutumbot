@@ -26,17 +26,33 @@ import {
 // Weekly Friday posts (keyed by Friday date)
 const fridayPosts: Map<string, TributePost[]> = new Map();
 
-// All-time tribute count per user (public channel tributes only)
-const allTimeTally: Map<string, number> = new Map();
+// User stats structure
+interface UserTributeStats {
+  count: number;
+  score: number;
+}
 
-// Today's tribute count per user (keyed by date)
-const dailyTally: Map<string, Map<string, number>> = new Map();
+// All-time tribute stats per user (public channel tributes only)
+const allTimeStats: Map<string, UserTributeStats> = new Map();
 
-// Friday-specific tribute count per user (only counts Friday tributes)
-const fridayTally: Map<string, number> = new Map();
+// Today's tribute stats per user (keyed by date)
+const dailyStats: Map<string, Map<string, UserTributeStats>> = new Map();
 
-// Private devotion tally (DM tributes - separate from competitive leaderboard)
-const privateDevotionTally: Map<string, number> = new Map();
+// Friday-specific tribute stats per user (only counts Friday tributes)
+const fridayStats: Map<string, UserTributeStats> = new Map();
+
+// Private devotion stats (DM tributes - separate from competitive leaderboard)
+const privateDevotionStats: Map<string, UserTributeStats> = new Map();
+
+// Helper to get or create stats
+function getOrCreateStats(map: Map<string, UserTributeStats>, key: string): UserTributeStats {
+  let stats = map.get(key);
+  if (!stats) {
+    stats = { count: 0, score: 0 };
+    map.set(key, stats);
+  }
+  return stats;
+}
 
 // ============ DATE HELPERS ============
 
@@ -68,15 +84,19 @@ export function isFriday(): boolean {
 
 // ============ TRIBUTE RECORDING ============
 
+// Default score if none provided
+const DEFAULT_SCORE = 1;
+
 /**
- * Record a tribute and update all tallies
- * DM tributes (guildId === 'dm') go to private devotion tally (not competitive)
+ * Record a tribute and update all stats (count + score)
+ * DM tributes (guildId === 'dm') go to private devotion (not competitive)
  */
-export function recordTributePost(post: TributePost): void {
-  // DM tributes go to private devotion tally only
+export function recordTributePost(post: TributePost, score: number = DEFAULT_SCORE): void {
+  // DM tributes go to private devotion stats only
   if (post.guildId === 'dm') {
-    const currentPrivate = privateDevotionTally.get(post.userId) || 0;
-    privateDevotionTally.set(post.userId, currentPrivate + 1);
+    const stats = getOrCreateStats(privateDevotionStats, post.userId);
+    stats.count += 1;
+    stats.score += score;
     return;
   }
 
@@ -88,67 +108,140 @@ export function recordTributePost(post: TributePost): void {
   posts.push(post);
   fridayPosts.set(fridayKey, posts);
 
-  // Update all-time tally
-  const currentAllTime = allTimeTally.get(post.userId) || 0;
-  allTimeTally.set(post.userId, currentAllTime + 1);
+  // Update all-time stats
+  const allTimeUserStats = getOrCreateStats(allTimeStats, post.userId);
+  allTimeUserStats.count += 1;
+  allTimeUserStats.score += score;
 
-  // Update daily tally
-  if (!dailyTally.has(todayKey)) {
-    dailyTally.set(todayKey, new Map());
+  // Update daily stats
+  if (!dailyStats.has(todayKey)) {
+    dailyStats.set(todayKey, new Map());
   }
-  const todayMap = dailyTally.get(todayKey)!;
-  const currentDaily = todayMap.get(post.userId) || 0;
-  todayMap.set(post.userId, currentDaily + 1);
+  const todayMap = dailyStats.get(todayKey)!;
+  const dailyUserStats = getOrCreateStats(todayMap, post.userId);
+  dailyUserStats.count += 1;
+  dailyUserStats.score += score;
 
-  // Update Friday tally (only if it's Friday)
+  // Update Friday stats (only if it's Friday)
   if (isFriday()) {
-    const currentFriday = fridayTally.get(post.userId) || 0;
-    fridayTally.set(post.userId, currentFriday + 1);
+    const fridayUserStats = getOrCreateStats(fridayStats, post.userId);
+    fridayUserStats.count += 1;
+    fridayUserStats.score += score;
   }
 }
 
-// ============ TALLY GETTERS ============
+// ============ STATS GETTERS ============
 
+export interface TributeStatsResult {
+  count: number;
+  score: number;
+}
+
+export function getAllTimeStats(userId: string): TributeStatsResult {
+  return allTimeStats.get(userId) || { count: 0, score: 0 };
+}
+
+export function getDailyStats(userId: string): TributeStatsResult {
+  const todayKey = getTodayKey();
+  const todayMap = dailyStats.get(todayKey);
+  return todayMap?.get(userId) || { count: 0, score: 0 };
+}
+
+export function getFridayStats(userId: string): TributeStatsResult {
+  return fridayStats.get(userId) || { count: 0, score: 0 };
+}
+
+export function getPrivateDevotionStats(userId: string): TributeStatsResult {
+  return privateDevotionStats.get(userId) || { count: 0, score: 0 };
+}
+
+// Legacy count-only getters (for backwards compatibility)
 export function getAllTimeTribute(userId: string): number {
-  return allTimeTally.get(userId) || 0;
+  return getAllTimeStats(userId).count;
 }
 
 export function getDailyTribute(userId: string): number {
-  const todayKey = getTodayKey();
-  const todayMap = dailyTally.get(todayKey);
-  return todayMap?.get(userId) || 0;
+  return getDailyStats(userId).count;
 }
 
 export function getFridayTribute(userId: string): number {
-  return fridayTally.get(userId) || 0;
+  return getFridayStats(userId).count;
 }
 
 export function getPrivateDevotion(userId: string): number {
-  return privateDevotionTally.get(userId) || 0;
+  return getPrivateDevotionStats(userId).count;
+}
+
+/**
+ * Get full user stats for AI context
+ */
+export function getFullUserStats(userId: string): {
+  allTime: TributeStatsResult;
+  daily: TributeStatsResult;
+  friday: TributeStatsResult;
+  private: TributeStatsResult;
+} {
+  return {
+    allTime: getAllTimeStats(userId),
+    daily: getDailyStats(userId),
+    friday: getFridayStats(userId),
+    private: getPrivateDevotionStats(userId),
+  };
 }
 
 // ============ LEADERBOARDS ============
 
-export function getAllTimeLeaderboard(): Array<{ odId: string; count: number }> {
-  return Array.from(allTimeTally.entries())
-    .sort((a, b) => b[1] - a[1])
-    .map(([odId, count]) => ({ odId, count }));
+export interface LeaderboardEntry {
+  userId: string;
+  count: number;
+  score: number;
 }
 
-export function getDailyLeaderboard(): Array<{ userId: string; count: number }> {
+export function getAllTimeLeaderboard(): LeaderboardEntry[] {
+  return Array.from(allTimeStats.entries())
+    .sort((a, b) => b[1].score - a[1].score) // Sort by score (highest first)
+    .map(([userId, stats]) => ({ userId, count: stats.count, score: stats.score }));
+}
+
+export function getDailyLeaderboard(): LeaderboardEntry[] {
   const todayKey = getTodayKey();
-  const todayMap = dailyTally.get(todayKey);
+  const todayMap = dailyStats.get(todayKey);
   if (!todayMap) return [];
 
   return Array.from(todayMap.entries())
-    .sort((a, b) => b[1] - a[1])
-    .map(([userId, count]) => ({ userId, count }));
+    .sort((a, b) => b[1].score - a[1].score)
+    .map(([userId, stats]) => ({ userId, count: stats.count, score: stats.score }));
 }
 
-export function getFridayLeaderboard(): Array<{ userId: string; count: number }> {
-  return Array.from(fridayTally.entries())
-    .sort((a, b) => b[1] - a[1])
-    .map(([userId, count]) => ({ userId, count }));
+export function getFridayLeaderboard(): LeaderboardEntry[] {
+  return Array.from(fridayStats.entries())
+    .sort((a, b) => b[1].score - a[1].score)
+    .map(([userId, stats]) => ({ userId, count: stats.count, score: stats.score }));
+}
+
+/**
+ * Format leaderboard for AI context
+ */
+export function getLeaderboardContext(): string {
+  const allTime = getAllTimeLeaderboard().slice(0, 5);
+  const daily = getDailyLeaderboard().slice(0, 5);
+  const friday = getFridayLeaderboard().slice(0, 5);
+
+  let context = '[LEADERBOARD DATA - Ranked by score (Tiki=10pts, Cocktail=5pts, Beer/Wine=2pts, Other=1pt)]\\n';
+
+  if (allTime.length > 0) {
+    context += 'All-time top 5: ' + allTime.map((e, i) => `#${i + 1} <@${e.userId}> (${e.score}pts, ${e.count} tributes)`).join(', ') + '\\n';
+  }
+
+  if (daily.length > 0) {
+    context += 'Today top 5: ' + daily.map((e, i) => `#${i + 1} <@${e.userId}> (${e.score}pts)`).join(', ') + '\\n';
+  }
+
+  if (friday.length > 0) {
+    context += 'Friday top 5: ' + friday.map((e, i) => `#${i + 1} <@${e.userId}> (${e.score}pts)`).join(', ');
+  }
+
+  return context;
 }
 
 // ============ RANDOM PRAISE/CONDEMNATION ============
@@ -178,21 +271,21 @@ function maybeGetRandomComment(): string | null {
 
   // 60% praise, 40% condemn
   if (Math.random() < 0.6) {
-    // Praise the top tributor
+    // Praise the top tributor (by score)
     const top = leaderboard[0];
     const phrase = getRandomPhrase(PRAISE_PHRASES);
-    return phrase.replace('TOP_USER', `<@${top.odId}>`).replace('COUNT', String(top.count));
+    return phrase.replace('TOP_USER', `<@${top.userId}>`).replace('COUNT', `${top.score}pts from ${top.count}`);
   } else {
-    // Condemn the lowest (only if they have at least 1 tribute - don't call out people who never participated)
+    // Condemn the lowest scorer (only if they have at least 1 tribute)
     const activeTributors = leaderboard.filter(u => u.count > 0);
     if (activeTributors.length < 2) return null;
 
     const lowest = activeTributors[activeTributors.length - 1];
     // Don't condemn if they're tied with the top
-    if (lowest.count === leaderboard[0].count) return null;
+    if (lowest.score === leaderboard[0].score) return null;
 
     const phrase = getRandomPhrase(CONDEMNATION_PHRASES);
-    return phrase.replace('LAZY_USER', `<@${lowest.odId}>`).replace('COUNT', String(lowest.count));
+    return phrase.replace('LAZY_USER', `<@${lowest.userId}>`).replace('COUNT', `${lowest.score}pts from ${lowest.count}`);
   }
 }
 
@@ -278,8 +371,9 @@ export function handleTributeCommand(
         response += `\n\n${randomComment}`;
       }
 
-      // Milestone messages
-      response += getMilestoneMessage(allTime);
+      // Milestone messages (based on score)
+      const allTimeStats = getAllTimeStats(userId);
+      response += getScoreMilestoneMessage(allTimeStats.score);
 
       return { content: response };
     }
@@ -295,9 +389,9 @@ export function handleTributeCommand(
       }
 
       const devotees = status.posts.map(p => {
-        const allTime = getAllTimeTribute(p.userId);
-        const fridayCount = getFridayTribute(p.userId);
-        return `  - ${p.username} (All-time: ${allTime} | Fridays: ${fridayCount})`;
+        const stats = getAllTimeStats(p.userId);
+        const fridayS = getFridayStats(p.userId);
+        return `  - ${p.username} (${stats.score}pts from ${stats.count} tributes | Fridays: ${fridayS.score}pts)`;
       }).join('\n');
 
       let response = `${getRandomPhrase(TRIBUTES_RECEIVED_STATUS)}\n\n**${fridayLabel}**: ${status.posts.length} offering${status.posts.length !== 1 ? 's' : ''} recorded.\n\n**Devoted mortals:**\n${devotees}`;
@@ -306,7 +400,7 @@ export function handleTributeCommand(
       const leaderboard = getAllTimeLeaderboard();
       if (leaderboard.length > 0) {
         const top = leaderboard[0];
-        response += `\n\n${ISEE_EMOJI} **Most devoted:** <@${top.odId}> with ${top.count} total tributes`;
+        response += `\n\n${ISEE_EMOJI} **Most devoted:** <@${top.userId}> with ${top.score}pts from ${top.count} tributes`;
       }
 
       return { content: response };
@@ -338,6 +432,14 @@ export function handleTributeCommand(
   }
 }
 
+// Category labels for display
+const CATEGORY_LABELS: Record<string, string> = {
+  TIKI: '🗿 TIKI',
+  COCKTAIL: '🍸 Cocktail',
+  BEER_WINE: '🍺 Beer/Wine',
+  OTHER: '📦 Other',
+};
+
 /**
  * Handle a tribute via @mention with image attachment
  */
@@ -347,56 +449,50 @@ export function handleMentionTribute(
   guildId: string,
   imageUrl: string,
   messageContent?: string,
-  imageDescription?: string
+  imageAnalysis?: { description: string; category: string; score: number; drinkName?: string }
 ): { content: string } {
+  const score = imageAnalysis?.score || 1;
+  const category = imageAnalysis?.category || 'OTHER';
+
   recordTributePost({
     userId,
     username,
     timestamp: new Date().toISOString(),
     imageUrl,
     guildId,
-  });
+  }, score);
 
-  const allTime = getAllTimeTribute(userId);
-  const daily = getDailyTribute(userId);
-  const fridayCount = getFridayTribute(userId);
-  const isTiki = messageContent ? isTikiRelated(messageContent) : false;
-  // Also check if image description mentions tiki elements
-  const isTikiImage = imageDescription ? isTikiRelated(imageDescription) : false;
+  const allTimeS = getAllTimeStats(userId);
+  const dailyS = getDailyStats(userId);
+  const fridayS = getFridayStats(userId);
   const isSpecialDay = isFriday();
 
   let response: string;
 
-  if (isSpecialDay) {
-    // Friday - extra dramatic!
-    if (isTiki || isTikiImage) {
-      response = getRandomPhrase(TIKI_TRIBUTE_PHRASES);
-    } else {
-      response = getRandomPhrase(TRIBUTE_RECEIVED_PHRASES);
-    }
-
-    // Add what Mutumbot SAW in the image
-    if (imageDescription) {
-      response += ` ${imageDescription}`;
-    }
-
-    response += `\n\n**${username}** honors the SACRED FRIDAY RITUAL!`;
-    response += `\n*Today: ${daily} | Fridays: ${fridayCount} | All-time: ${allTime}*`;
+  // Response varies by category
+  if (category === 'TIKI') {
+    response = getRandomPhrase(TIKI_TRIBUTE_PHRASES);
+  } else if (category === 'COCKTAIL') {
+    response = getRandomPhrase(TRIBUTE_RECEIVED_PHRASES);
   } else {
-    // Non-Friday
-    if (isTiki || isTikiImage) {
-      response = `${ISEE_EMOJI} A TIKI OFFERING outside the sacred Friday? Your devotion runs DEEP, **${username}**...`;
-      if (imageDescription) {
-        response += ` ${imageDescription}`;
-      }
-    } else {
-      response = getRandomPhrase(NON_FRIDAY_TRIBUTE_PHRASES);
-      if (imageDescription) {
-        response += ` ${imageDescription}`;
-      }
-      response += `\n\n**${username}**'s tribute has been recorded.`;
-    }
-    response += `\n*Today: ${daily} | All-time: ${allTime}*`;
+    response = getRandomPhrase(NON_FRIDAY_TRIBUTE_PHRASES);
+  }
+
+  // Add what Mutumbot SAW in the image
+  if (imageAnalysis?.description) {
+    response += ` ${imageAnalysis.description}`;
+  }
+
+  // Show the score earned
+  const categoryLabel = CATEGORY_LABELS[category] || category;
+  response += `\n\n**+${score}pts** (${categoryLabel}${imageAnalysis?.drinkName ? `: ${imageAnalysis.drinkName}` : ''})`;
+
+  if (isSpecialDay) {
+    response += `\n**${username}** honors the SACRED FRIDAY RITUAL!`;
+    response += `\n*Today: ${dailyS.score}pts | Fridays: ${fridayS.score}pts | All-time: ${allTimeS.score}pts (${allTimeS.count} tributes)*`;
+  } else {
+    response += `\n**${username}**'s tribute has been recorded.`;
+    response += `\n*Today: ${dailyS.score}pts | All-time: ${allTimeS.score}pts (${allTimeS.count} tributes)*`;
   }
 
   // Maybe add random praise/condemnation
@@ -405,28 +501,30 @@ export function handleMentionTribute(
     response += `\n\n${randomComment}`;
   }
 
-  // Milestone messages
-  response += getMilestoneMessage(allTime);
+  // Milestone messages (based on score now)
+  response += getScoreMilestoneMessage(allTimeS.score);
 
   return { content: response };
 }
 
 /**
- * Get milestone message if applicable
+ * Get milestone message based on score
  */
-function getMilestoneMessage(totalTributes: number): string {
-  switch (totalTributes) {
-    case 5:
-      return `\n\n${ISEE_EMOJI} **FIVE TRIBUTES!** You have proven your devotion, mortal.`;
-    case 10:
-      return `\n\n${ISEE_EMOJI} **TEN TRIBUTES!** The spirits recognize you as a TRUE DEVOTEE.`;
-    case 25:
-      return `\n\n${ISEE_EMOJI} **TWENTY-FIVE TRIBUTES!** You have ascended to TIKI ELDER status!`;
-    case 50:
-      return `\n\n${ISEE_EMOJI} **FIFTY TRIBUTES!** The ancient ones BOW before your dedication!`;
-    case 100:
-      return `\n\n${ISEE_EMOJI} **ONE HUNDRED TRIBUTES!** You have achieved TIKI IMMORTALITY! Legends speak of your name!`;
-    default:
-      return '';
+function getScoreMilestoneMessage(totalScore: number): string {
+  // Score milestones (check if we just hit them)
+  const milestones = [
+    { score: 50, msg: `**50 POINTS!** You have proven your devotion, mortal.` },
+    { score: 100, msg: `**100 POINTS!** The spirits recognize you as a TRUE DEVOTEE.` },
+    { score: 250, msg: `**250 POINTS!** You have ascended to TIKI ELDER status!` },
+    { score: 500, msg: `**500 POINTS!** The ancient ones BOW before your dedication!` },
+    { score: 1000, msg: `**1000 POINTS!** You have achieved TIKI IMMORTALITY! Legends speak of your name!` },
+  ];
+
+  for (const milestone of milestones) {
+    // Check if score just crossed this milestone (within last tribute's max possible score of 10)
+    if (totalScore >= milestone.score && totalScore < milestone.score + 10) {
+      return `\n\n${ISEE_EMOJI} ${milestone.msg}`;
+    }
   }
+  return '';
 }
