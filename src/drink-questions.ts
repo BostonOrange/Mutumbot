@@ -142,7 +142,7 @@ async function analyzeImageWithOpenAI(
   const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
   const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
+    model: 'gpt-5-nano-2025-08-07',
     messages: [
       {
         role: 'user',
