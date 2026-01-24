@@ -1,3 +1,9 @@
+/**
+ * Discord Interactions Handler (Vercel Serverless Function)
+ *
+ * Handles slash commands for Mutumbot, the ominous tiki entity.
+ */
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { verifyKey } from 'discord-interactions';
 import {
@@ -6,8 +12,13 @@ import {
   InteractionResponseType,
   InteractionResponse,
 } from '../src/types';
-import { handleBeerCommand } from '../src/beer-tracker';
-import { handleDrinkQuestion, handleDrinkList, handleRandomDrinkFact } from '../src/drink-questions';
+import { handleTributeCommand } from '../src/tribute-tracker';
+import {
+  handleDrinkQuestion,
+  handleDrinkList,
+  handleRandomDrinkFact,
+} from '../src/drink-questions';
+import { ISEE_EMOJI } from '../src/personality';
 
 const DISCORD_PUBLIC_KEY = process.env.DISCORD_PUBLIC_KEY || '';
 
@@ -68,20 +79,25 @@ export default async function handler(
 /**
  * Route application commands to their handlers
  */
-async function handleApplicationCommand(interaction: DiscordInteraction): Promise<InteractionResponse> {
+async function handleApplicationCommand(
+  interaction: DiscordInteraction
+): Promise<InteractionResponse> {
   const commandName = interaction.data?.name;
   const options = interaction.data?.options || [];
   const userId = interaction.member?.user?.id || interaction.user?.id || 'unknown';
-  const username = interaction.member?.user?.username || interaction.user?.username || 'Unknown User';
+  const username =
+    interaction.member?.user?.username || interaction.user?.username || 'Unknown Mortal';
   const guildId = interaction.guild_id || 'dm';
+  const channelId = interaction.channel_id;
 
   switch (commandName) {
-    case 'beer': {
+    // /tribute command (formerly /beer)
+    case 'tribute': {
       const subcommand = options[0]?.name || 'status';
       let imageUrl: string | undefined;
 
-      // Check for image attachment in post subcommand
-      if (subcommand === 'post') {
+      // Check for image attachment in offer subcommand
+      if (subcommand === 'offer') {
         const imageOption = options[0]?.options?.find(opt => opt.name === 'image');
         if (imageOption && interaction.data?.resolved?.attachments) {
           const attachmentId = imageOption.value as string;
@@ -89,7 +105,7 @@ async function handleApplicationCommand(interaction: DiscordInteraction): Promis
         }
       }
 
-      const result = handleBeerCommand(subcommand, userId, username, guildId, imageUrl);
+      const result = handleTributeCommand(subcommand, userId, username, guildId, imageUrl);
 
       return {
         type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -97,13 +113,26 @@ async function handleApplicationCommand(interaction: DiscordInteraction): Promis
       };
     }
 
+    // /ask command (direct questions, formerly /drink ask)
+    case 'ask': {
+      const questionOption = options.find(opt => opt.name === 'question');
+      const question = (questionOption?.value as string) || '';
+      const result = await handleDrinkQuestion(question, channelId);
+
+      return {
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: result,
+      };
+    }
+
+    // /drink command (legacy, for list and random)
     case 'drink': {
       const subcommand = options[0]?.name || 'list';
 
       if (subcommand === 'ask') {
         const questionOption = options[0]?.options?.find(opt => opt.name === 'question');
         const question = (questionOption?.value as string) || '';
-        const result = await handleDrinkQuestion(question);
+        const result = await handleDrinkQuestion(question, channelId);
 
         return {
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -127,12 +156,42 @@ async function handleApplicationCommand(interaction: DiscordInteraction): Promis
       };
     }
 
+    // /cheers command - now with ominous flair
     case 'cheers': {
       return {
         type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
         data: {
-          content: '🍻 **CHEERS!** 🍻\n\nHere\'s to good times and great drinks! 🥂',
+          content: `${ISEE_EMOJI} **THE SPIRITS RAISE THEIR VESSELS!**\n\nTo good fortune, ancient traditions, and the SACRED ELIXIRS that bind us all! CHEERS, mortals!`,
         },
+      };
+    }
+
+    // Legacy /beer command - redirect to /tribute
+    case 'beer': {
+      const subcommand = options[0]?.name || 'status';
+      let imageUrl: string | undefined;
+
+      if (subcommand === 'post') {
+        const imageOption = options[0]?.options?.find(opt => opt.name === 'image');
+        if (imageOption && interaction.data?.resolved?.attachments) {
+          const attachmentId = imageOption.value as string;
+          imageUrl = interaction.data.resolved.attachments[attachmentId]?.url;
+        }
+      }
+
+      // Map old subcommands to new ones
+      const subcommandMap: Record<string, string> = {
+        post: 'offer',
+        status: 'status',
+        reminder: 'demand',
+      };
+
+      const mappedSubcommand = subcommandMap[subcommand] || subcommand;
+      const result = handleTributeCommand(mappedSubcommand, userId, username, guildId, imageUrl);
+
+      return {
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: result,
       };
     }
 
@@ -140,7 +199,7 @@ async function handleApplicationCommand(interaction: DiscordInteraction): Promis
       return {
         type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
         data: {
-          content: 'Unknown command. Try `/beer`, `/drink`, or `/cheers`!',
+          content: `${ISEE_EMOJI} Unknown invocation. The spirits recognize: \`/tribute\`, \`/ask\`, \`/drink\`, or \`/cheers\`.`,
         },
       };
   }

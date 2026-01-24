@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(tree /f \"C:\\\\Developer\\\\mutumbot\")",
+      "Bash(npm install:*)"
+    ]
+  }
+}

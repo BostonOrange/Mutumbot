@@ -21,17 +21,17 @@ if (!DISCORD_APP_ID || !DISCORD_BOT_TOKEN) {
 // Slash command definitions
 const commands = [
   {
-    name: 'beer',
-    description: 'Friday beer tracking commands',
+    name: 'tribute',
+    description: 'Friday tribute offerings to the ancient tiki spirits',
     options: [
       {
-        name: 'post',
-        description: 'Post your Friday beer! 🍺',
+        name: 'offer',
+        description: 'Offer your Friday tribute to the spirits',
         type: 1, // SUB_COMMAND
         options: [
           {
             name: 'image',
-            description: 'Attach a picture of your beer',
+            description: 'Visual proof of your offering (the spirits demand it!)',
             type: 11, // ATTACHMENT
             required: false,
           },
@@ -39,28 +39,40 @@ const commands = [
       },
       {
         name: 'status',
-        description: 'Check if someone has posted their Friday beer',
+        description: 'See who has honored the ritual this Friday',
         type: 1, // SUB_COMMAND
       },
       {
-        name: 'reminder',
-        description: 'Send a reminder to post Friday beer',
+        name: 'demand',
+        description: 'Invoke the spirits to demand tribute from mortals',
         type: 1, // SUB_COMMAND
       },
     ],
   },
   {
+    name: 'ask',
+    description: 'Seek ancient wisdom about drinks and libations',
+    options: [
+      {
+        name: 'question',
+        description: 'Your question for the tiki spirits',
+        type: 3, // STRING
+        required: true,
+      },
+    ],
+  },
+  {
     name: 'drink',
-    description: 'Ask questions about drinks and beverages',
+    description: 'Consult the ancient knowledge of beverages',
     options: [
       {
         name: 'ask',
-        description: 'Ask a question about any drink',
+        description: 'Ask a question about any drink (use /ask for a simpler command)',
         type: 1, // SUB_COMMAND
         options: [
           {
             name: 'question',
-            description: 'Your question about drinks (e.g., "What types of beer are there?")',
+            description: 'Your question about drinks',
             type: 3, // STRING
             required: true,
           },
@@ -68,19 +80,19 @@ const commands = [
       },
       {
         name: 'list',
-        description: 'List all drink categories I know about',
+        description: 'Reveal what ancient knowledge the spirits possess',
         type: 1, // SUB_COMMAND
       },
       {
         name: 'random',
-        description: 'Get a random drink fact',
+        description: 'Receive a random revelation from the tiki depths',
         type: 1, // SUB_COMMAND
       },
     ],
   },
   {
     name: 'cheers',
-    description: 'Send a cheers to the channel! 🍻',
+    description: 'Raise your vessel to the spirits!',
   },
 ];
 
@@ -111,9 +123,9 @@ async function registerCommands(): Promise<void> {
       process.exit(1);
     }
 
-    const data = await response.json() as { name: string; id: string }[];
+    const data = (await response.json()) as { name: string; id: string }[];
     console.log(`Successfully registered ${data.length} commands:`);
-    data.forEach((cmd) => {
+    data.forEach(cmd => {
       console.log(`  - /${cmd.name} (ID: ${cmd.id})`);
     });
 

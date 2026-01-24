@@ -149,8 +149,8 @@ export interface SelectOption {
   default?: boolean;
 }
 
-// Beer tracking types
-export interface BeerPost {
+// Tribute tracking types (formerly Beer tracking)
+export interface TributePost {
   userId: string;
   username: string;
   timestamp: string;
@@ -158,8 +158,13 @@ export interface BeerPost {
   guildId: string;
 }
 
+// Legacy alias for backwards compatibility
+export type BeerPost = TributePost;
+
 export interface FridayStatus {
   date: string;
-  hasBeerPost: boolean;
-  posts: BeerPost[];
+  hasTributePost: boolean;
+  // Legacy alias
+  hasBeerPost?: boolean;
+  posts: TributePost[];
 }

@@ -1,22 +1,29 @@
+/**
+ * HTTP Endpoint for Command Registration
+ *
+ * Alternative to the CLI script for registering commands via HTTP request.
+ * Useful for triggering registration from a webhook or manual request.
+ */
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const DISCORD_APP_ID = process.env.DISCORD_APP_ID;
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 
-// Slash command definitions
+// Slash command definitions (must match scripts/register-commands.ts)
 const commands = [
   {
-    name: 'beer',
-    description: 'Friday beer tracking commands',
+    name: 'tribute',
+    description: 'Friday tribute offerings to the ancient tiki spirits',
     options: [
       {
-        name: 'post',
-        description: 'Post your Friday beer! 🍺',
+        name: 'offer',
+        description: 'Offer your Friday tribute to the spirits',
         type: 1,
         options: [
           {
             name: 'image',
-            description: 'Attach a picture of your beer',
+            description: 'Visual proof of your offering (the spirits demand it!)',
             type: 11,
             required: false,
           },
@@ -24,28 +31,40 @@ const commands = [
       },
       {
         name: 'status',
-        description: 'Check if someone has posted their Friday beer',
+        description: 'See who has honored the ritual this Friday',
         type: 1,
       },
       {
-        name: 'reminder',
-        description: 'Send a reminder to post Friday beer',
+        name: 'demand',
+        description: 'Invoke the spirits to demand tribute from mortals',
         type: 1,
       },
     ],
   },
   {
+    name: 'ask',
+    description: 'Seek ancient wisdom about drinks and libations',
+    options: [
+      {
+        name: 'question',
+        description: 'Your question for the tiki spirits',
+        type: 3,
+        required: true,
+      },
+    ],
+  },
+  {
     name: 'drink',
-    description: 'Ask questions about drinks and beverages',
+    description: 'Consult the ancient knowledge of beverages',
     options: [
       {
         name: 'ask',
-        description: 'Ask a question about any drink',
+        description: 'Ask a question about any drink (use /ask for a simpler command)',
         type: 1,
         options: [
           {
             name: 'question',
-            description: 'Your question about drinks (e.g., "What types of beer are there?")',
+            description: 'Your question about drinks',
             type: 3,
             required: true,
           },
@@ -53,19 +72,19 @@ const commands = [
       },
       {
         name: 'list',
-        description: 'List all drink categories I know about',
+        description: 'Reveal what ancient knowledge the spirits possess',
         type: 1,
       },
       {
         name: 'random',
-        description: 'Get a random drink fact',
+        description: 'Receive a random revelation from the tiki depths',
         type: 1,
       },
     ],
   },
   {
     name: 'cheers',
-    description: 'Send a cheers to the channel! 🍻',
+    description: 'Raise your vessel to the spirits!',
   },
 ];
 
@@ -75,7 +94,7 @@ export default async function handler(
 ): Promise<void> {
   if (!DISCORD_APP_ID || !DISCORD_BOT_TOKEN) {
     res.status(500).json({
-      error: 'Missing DISCORD_APP_ID or DISCORD_BOT_TOKEN environment variables'
+      error: 'Missing DISCORD_APP_ID or DISCORD_BOT_TOKEN environment variables',
     });
     return;
   }
@@ -96,16 +115,16 @@ export default async function handler(
       const error = await response.text();
       res.status(response.status).json({
         error: 'Failed to register commands',
-        details: error
+        details: error,
       });
       return;
     }
 
-    const data = await response.json() as { name: string; id: string }[];
+    const data = (await response.json()) as { name: string; id: string }[];
     res.status(200).json({
       success: true,
-      message: `Successfully registered ${data.length} commands`,
-      commands: data.map((cmd) => ({
+      message: `Successfully registered ${data.length} commands for MUTUMBOT`,
+      commands: data.map(cmd => ({
         name: cmd.name,
         id: cmd.id,
       })),
@@ -114,7 +133,7 @@ export default async function handler(
   } catch (error) {
     res.status(500).json({
       error: 'Failed to register commands',
-      details: String(error)
+      details: String(error),
     });
   }
 }

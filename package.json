@@ -1,17 +1,21 @@
 {
   "name": "mutumbot",
-  "version": "1.0.0",
-  "description": "Discord bot for Friday beer tracking and drink questions",
+  "version": "2.0.0",
+  "description": "Mutumbot - The Ominous Tiki Entity of Tiki Room Stockholm",
   "main": "api/interactions.js",
   "scripts": {
     "register": "npx ts-node scripts/register-commands.ts",
     "dev": "vercel dev",
+    "gateway": "npx ts-node src/gateway/index.ts",
+    "gateway:build": "tsc --project tsconfig.gateway.json",
+    "gateway:start": "node dist/gateway/index.js",
     "lint": "eslint . --ext .ts"
   },
   "keywords": [
     "discord",
     "bot",
-    "beer",
+    "tiki",
+    "mutumbot",
     "friday"
   ],
   "author": "",
@@ -19,10 +23,13 @@
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
     "discord-interactions": "^3.4.0",
+    "discord.js": "^14.14.1",
+    "node-cron": "^3.0.3",
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
+    "@types/node-cron": "^3.0.11",
     "@vercel/node": "^3.0.0",
     "typescript": "^5.3.0",
     "ts-node": "^10.9.0"
