@@ -67,8 +67,14 @@ export function isFriday(): boolean {
 
 /**
  * Record a tribute and update all tallies
+ * DM tributes (guildId === 'dm') are NOT counted toward competitive tallies
  */
 export function recordTributePost(post: TributePost): void {
+  // Don't count DM tributes toward competitive tallies
+  if (post.guildId === 'dm') {
+    return;
+  }
+
   const todayKey = getTodayKey();
   const fridayKey = getCurrentFridayKey();
 
