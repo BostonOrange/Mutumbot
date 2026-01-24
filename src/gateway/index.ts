@@ -7,11 +7,12 @@
 
 import { Client, GatewayIntentBits, Events, Partials } from 'discord.js';
 import { handleMentionMessage } from './mentionHandler';
-import { startFridayCron } from './fridayCron';
+import { startFridayCron, postImmediateDemand } from './fridayCron';
 
 // Environment variables
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const PARTY_CHANNEL_ID = process.env.PARTY_CHANNEL_ID;
+const POST_DEMAND_ON_STARTUP = process.env.POST_DEMAND_ON_STARTUP === 'true';
 
 if (!DISCORD_BOT_TOKEN) {
   console.error('Missing DISCORD_BOT_TOKEN environment variable');
@@ -30,7 +31,7 @@ const client = new Client({
 });
 
 // Event: Bot is ready
-client.once(Events.ClientReady, readyClient => {
+client.once(Events.ClientReady, async readyClient => {
   console.log(`MUTUMBOT AWAKENS...`);
   console.log(`Logged in as ${readyClient.user.tag}`);
   console.log(`Serving ${readyClient.guilds.cache.size} guild(s)`);
@@ -39,6 +40,12 @@ client.once(Events.ClientReady, readyClient => {
   if (PARTY_CHANNEL_ID) {
     startFridayCron(client, PARTY_CHANNEL_ID);
     console.log(`Friday tribute demands will be posted to channel: ${PARTY_CHANNEL_ID}`);
+
+    // Post immediate demand if requested (one-off, for testing)
+    if (POST_DEMAND_ON_STARTUP) {
+      console.log('POST_DEMAND_ON_STARTUP is set - posting immediate demand...');
+      await postImmediateDemand(client, PARTY_CHANNEL_ID);
+    }
   } else {
     console.log('No PARTY_CHANNEL_ID configured - Friday auto-demands disabled');
   }
