@@ -6,6 +6,7 @@
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
 import {
   MUTUMBOT_SYSTEM_PROMPT,
   MUTUMBOT_AWAKENING,
@@ -18,6 +19,7 @@ import {
 } from './services/conversationContext';
 
 const GOOGLE_AI_API_KEY = process.env.GOOGLE_AI_API_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 // Tribute scoring system
 export const TRIBUTE_SCORES = {
@@ -38,37 +40,10 @@ export interface ImageAnalysis {
 }
 
 /**
- * Analyze an image and generate a full AI response for the tribute
- * Used when receiving tribute images so Mutumbot can actually SEE and JUDGE them
+ * Build the image analysis prompt for AI models
  */
-export async function analyzeImage(
-  imageUrl: string,
-  userMessage?: string,
-  isFriday?: boolean,
-  isDM?: boolean
-): Promise<ImageAnalysis | null> {
-  if (!GOOGLE_AI_API_KEY) {
-    return null;
-  }
-
-  try {
-    // Fetch the image from Discord CDN
-    const response = await fetch(imageUrl);
-    if (!response.ok) {
-      console.error('Failed to fetch image:', response.status);
-      return null;
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    const base64 = Buffer.from(arrayBuffer).toString('base64');
-
-    // Get the mime type from the response
-    const contentType = response.headers.get('content-type') || 'image/jpeg';
-
-    const genAI = new GoogleGenerativeAI(GOOGLE_AI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
-
-    const prompt = `You are MUTUMBOT, an ancient and ominous tiki entity receiving a tribute offering.
+function buildImageAnalysisPrompt(userMessage?: string, isFriday?: boolean, isDM?: boolean): string {
+  return `You are MUTUMBOT, an ancient and ominous tiki entity receiving a tribute offering.
 
 Analyze this image and respond in EXACTLY this JSON format (no markdown, just raw JSON):
 {
@@ -98,42 +73,161 @@ ${isDM ? '- This is a private DM tribute - these remain between you and the mort
 ${userMessage ? `- The mortal who sent this said: "${userMessage}"` : ''}
 
 Keep your response mysterious and theatrical but not too long.`;
+}
 
-    const result = await model.generateContent([
-      {
-        inlineData: {
-          mimeType: contentType,
-          data: base64,
-        },
+/**
+ * Parse AI response JSON into ImageAnalysis
+ */
+function parseImageAnalysisResponse(responseText: string): ImageAnalysis | null {
+  try {
+    const parsed = JSON.parse(responseText.replace(/```json\n?|\n?```/g, ''));
+    const category = (['TIKI', 'COCKTAIL', 'BEER_WINE', 'OTHER'].includes(parsed.category)
+      ? parsed.category
+      : 'OTHER') as DrinkCategory;
+
+    return {
+      description: parsed.description || 'A mysterious offering',
+      category,
+      score: TRIBUTE_SCORES[category],
+      drinkName: parsed.drinkName || undefined,
+      response: parsed.response || undefined,
+    };
+  } catch {
+    console.error('Failed to parse image analysis JSON:', responseText);
+    return null;
+  }
+}
+
+/**
+ * Analyze image using Google Gemini
+ */
+async function analyzeImageWithGemini(
+  base64: string,
+  contentType: string,
+  prompt: string
+): Promise<ImageAnalysis | null> {
+  if (!GOOGLE_AI_API_KEY) {
+    return null;
+  }
+
+  const genAI = new GoogleGenerativeAI(GOOGLE_AI_API_KEY);
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
+
+  const result = await model.generateContent([
+    {
+      inlineData: {
+        mimeType: contentType,
+        data: base64,
       },
-      { text: prompt },
-    ]);
+    },
+    { text: prompt },
+  ]);
 
-    const responseText = result.response.text().trim();
+  const responseText = result.response.text().trim();
+  return parseImageAnalysisResponse(responseText);
+}
 
-    try {
-      // Parse the JSON response
-      const parsed = JSON.parse(responseText.replace(/```json\n?|\n?```/g, ''));
-      const category = (['TIKI', 'COCKTAIL', 'BEER_WINE', 'OTHER'].includes(parsed.category)
-        ? parsed.category
-        : 'OTHER') as DrinkCategory;
+/**
+ * Analyze image using OpenAI GPT-4o (fallback)
+ */
+async function analyzeImageWithOpenAI(
+  base64: string,
+  contentType: string,
+  prompt: string
+): Promise<ImageAnalysis | null> {
+  if (!OPENAI_API_KEY) {
+    return null;
+  }
 
-      return {
-        description: parsed.description || 'A mysterious offering',
-        category,
-        score: TRIBUTE_SCORES[category],
-        drinkName: parsed.drinkName || undefined,
-        response: parsed.response || undefined,
-      };
-    } catch {
-      // If JSON parsing fails, fall back to basic response
-      console.error('Failed to parse image analysis JSON:', responseText);
-      return {
-        description: responseText.slice(0, 200),
-        category: 'OTHER',
-        score: TRIBUTE_SCORES.OTHER,
-      };
+  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+  const response = await openai.chat.completions.create({
+    model: 'gpt-5-nano-2025-08-07',
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            image_url: {
+              url: `data:${contentType};base64,${base64}`,
+            },
+          },
+          {
+            type: 'text',
+            text: prompt,
+          },
+        ],
+      },
+    ],
+    max_tokens: 500,
+  });
+
+  const responseText = response.choices[0]?.message?.content?.trim();
+  if (!responseText) {
+    return null;
+  }
+
+  return parseImageAnalysisResponse(responseText);
+}
+
+/**
+ * Analyze an image and generate a full AI response for the tribute
+ * Uses Gemini as primary, falls back to OpenAI if Gemini fails (e.g., rate limit)
+ */
+export async function analyzeImage(
+  imageUrl: string,
+  userMessage?: string,
+  isFriday?: boolean,
+  isDM?: boolean
+): Promise<ImageAnalysis | null> {
+  // Need at least one AI provider
+  if (!GOOGLE_AI_API_KEY && !OPENAI_API_KEY) {
+    console.error('No AI API keys configured for image analysis');
+    return null;
+  }
+
+  try {
+    // Fetch the image from Discord CDN
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+      console.error('Failed to fetch image:', response.status);
+      return null;
     }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
+    const prompt = buildImageAnalysisPrompt(userMessage, isFriday, isDM);
+
+    // Try Gemini first (primary)
+    if (GOOGLE_AI_API_KEY) {
+      try {
+        const geminiResult = await analyzeImageWithGemini(base64, contentType, prompt);
+        if (geminiResult) {
+          console.log('Image analyzed with Gemini');
+          return geminiResult;
+        }
+      } catch (error) {
+        console.error('Gemini analysis failed, trying OpenAI fallback:', error);
+      }
+    }
+
+    // Fallback to OpenAI
+    if (OPENAI_API_KEY) {
+      try {
+        const openaiResult = await analyzeImageWithOpenAI(base64, contentType, prompt);
+        if (openaiResult) {
+          console.log('Image analyzed with OpenAI (fallback)');
+          return openaiResult;
+        }
+      } catch (error) {
+        console.error('OpenAI fallback also failed:', error);
+      }
+    }
+
+    console.error('All AI providers failed for image analysis');
+    return null;
   } catch (error) {
     console.error('Image analysis error:', error);
     return null;
@@ -141,65 +235,144 @@ Keep your response mysterious and theatrical but not too long.`;
 }
 
 /**
- * Handle the /ask command using Google AI with Mutumbot personality
+ * Chat with Gemini (with conversation history)
+ */
+async function chatWithGemini(
+  question: string,
+  channelId?: string
+): Promise<string | null> {
+  if (!GOOGLE_AI_API_KEY) {
+    return null;
+  }
+
+  const genAI = new GoogleGenerativeAI(GOOGLE_AI_API_KEY);
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
+
+  // Build chat history with system prompt and conversation context
+  const baseHistory = [
+    {
+      role: 'user' as const,
+      parts: [{ text: MUTUMBOT_SYSTEM_PROMPT }],
+    },
+    {
+      role: 'model' as const,
+      parts: [{ text: MUTUMBOT_AWAKENING }],
+    },
+  ];
+
+  // Add conversation context if we have a channel ID
+  const contextHistory = channelId ? formatContextForAI(channelId) : [];
+
+  const chat = model.startChat({
+    history: [...baseHistory, ...contextHistory],
+  });
+
+  const result = await chat.sendMessage(question);
+  return result.response.text();
+}
+
+/**
+ * Chat with OpenAI (with conversation history) - fallback
+ */
+async function chatWithOpenAI(
+  question: string,
+  channelId?: string
+): Promise<string | null> {
+  if (!OPENAI_API_KEY) {
+    return null;
+  }
+
+  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+  // Build messages array for OpenAI
+  const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+    { role: 'system', content: MUTUMBOT_SYSTEM_PROMPT },
+    { role: 'assistant', content: MUTUMBOT_AWAKENING },
+  ];
+
+  // Add conversation context if we have a channel ID
+  if (channelId) {
+    const contextHistory = formatContextForAI(channelId);
+    for (const entry of contextHistory) {
+      const role = entry.role === 'user' ? 'user' : 'assistant';
+      const text = entry.parts.map((p: { text: string }) => p.text).join('');
+      messages.push({ role, content: text });
+    }
+  }
+
+  // Add the current question
+  messages.push({ role: 'user', content: question });
+
+  const response = await openai.chat.completions.create({
+    model: 'gpt-5-nano-2025-08-07',
+    messages,
+    max_tokens: 1000,
+  });
+
+  return response.choices[0]?.message?.content || null;
+}
+
+/**
+ * Handle the /ask command using AI with Mutumbot personality
+ * Uses Gemini as primary, falls back to OpenAI if Gemini fails
  */
 export async function handleDrinkQuestion(
   question: string,
   channelId?: string
 ): Promise<{ content: string }> {
-  if (!GOOGLE_AI_API_KEY) {
+  if (!GOOGLE_AI_API_KEY && !OPENAI_API_KEY) {
     return {
       content: `${ISEE_EMOJI} The spirits are SILENT. The ancient connection to the AI realm has not been established. Summon the bot administrator to configure the sacred API key.`,
     };
   }
 
-  try {
-    const genAI = new GoogleGenerativeAI(GOOGLE_AI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
+  let response: string | null = null;
 
-    // Build chat history with system prompt and conversation context
-    const baseHistory = [
-      {
-        role: 'user' as const,
-        parts: [{ text: MUTUMBOT_SYSTEM_PROMPT }],
-      },
-      {
-        role: 'model' as const,
-        parts: [{ text: MUTUMBOT_AWAKENING }],
-      },
-    ];
-
-    // Add conversation context if we have a channel ID
-    const contextHistory = channelId ? formatContextForAI(channelId) : [];
-
-    const chat = model.startChat({
-      history: [...baseHistory, ...contextHistory],
-    });
-
-    const result = await chat.sendMessage(question);
-    let response = result.response.text();
-
-    // Process [ISEE] markers in the response
-    response = processIseeMarkers(response);
-
-    // Store this exchange in context for future reference
-    if (channelId) {
-      addToContext(channelId, 'user', question);
-      addToContext(channelId, 'model', response);
+  // Try Gemini first
+  if (GOOGLE_AI_API_KEY) {
+    try {
+      response = await chatWithGemini(question, channelId);
+      if (response) {
+        console.log('Chat handled by Gemini');
+      }
+    } catch (error) {
+      console.error('Gemini chat failed, trying OpenAI fallback:', error);
     }
+  }
 
-    // Truncate if too long (Discord limit)
-    if (response.length > 2000) {
-      response = response.slice(0, 1997) + '...';
+  // Fallback to OpenAI
+  if (!response && OPENAI_API_KEY) {
+    try {
+      response = await chatWithOpenAI(question, channelId);
+      if (response) {
+        console.log('Chat handled by OpenAI (fallback)');
+      }
+    } catch (error) {
+      console.error('OpenAI chat fallback also failed:', error);
     }
+  }
 
-    return { content: response };
-  } catch (error) {
-    console.error('Google AI error:', error);
+  if (!response) {
     return {
       content: `${ISEE_EMOJI} The spirits are DISTURBED. Something has disrupted the ancient connection. Try again, mortal.`,
     };
   }
+
+  // Process [ISEE] markers in the response
+  response = processIseeMarkers(response);
+
+  // Store this exchange in context for future reference
+  if (channelId) {
+    addToContext(channelId, 'user', question);
+    addToContext(channelId, 'model', response);
+  }
+
+  // Truncate if too long (Discord limit)
+  if (response.length > 2000) {
+    response = response.slice(0, 1997) + '...';
+  }
+
+  return { content: response };
 }
 
 /**
@@ -232,46 +405,100 @@ export async function handleMention(
 }
 
 /**
+ * Generate simple text with Gemini
+ */
+async function generateWithGemini(prompt: string): Promise<string | null> {
+  if (!GOOGLE_AI_API_KEY) {
+    return null;
+  }
+
+  const genAI = new GoogleGenerativeAI(GOOGLE_AI_API_KEY);
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
+
+  const result = await model.generateContent(prompt);
+  return result.response.text();
+}
+
+/**
+ * Generate simple text with OpenAI (fallback)
+ */
+async function generateWithOpenAI(prompt: string): Promise<string | null> {
+  if (!OPENAI_API_KEY) {
+    return null;
+  }
+
+  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+  const response = await openai.chat.completions.create({
+    model: 'gpt-5-nano-2025-08-07',
+    messages: [{ role: 'user', content: prompt }],
+    max_tokens: 500,
+  });
+
+  return response.choices[0]?.message?.content || null;
+}
+
+/**
  * Handle the legacy /drink random command - random tiki/drink fact
+ * Uses Gemini as primary, falls back to OpenAI if Gemini fails
  */
 export async function handleRandomDrinkFact(): Promise<{ content: string }> {
-  if (!GOOGLE_AI_API_KEY) {
+  if (!GOOGLE_AI_API_KEY && !OPENAI_API_KEY) {
     return {
       content: `${ISEE_EMOJI} The spirits are SILENT. The sacred API connection is not configured.`,
     };
   }
 
-  try {
-    const genAI = new GoogleGenerativeAI(GOOGLE_AI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
+  const topics = [
+    'tiki cocktails',
+    'rum history',
+    'Don the Beachcomber',
+    'Trader Vic',
+    'tropical drinks',
+    'tiki culture',
+    'Mai Tai',
+    'exotic cocktail ingredients',
+  ];
+  const randomTopic = topics[Math.floor(Math.random() * topics.length)];
 
-    const topics = [
-      'tiki cocktails',
-      'rum history',
-      'Don the Beachcomber',
-      'Trader Vic',
-      'tropical drinks',
-      'tiki culture',
-      'Mai Tai',
-      'exotic cocktail ingredients',
-    ];
-    const randomTopic = topics[Math.floor(Math.random() * topics.length)];
+  const prompt = `You are MUTUMBOT, an ancient and ominous tiki entity. Tell me one interesting and surprising fact about ${randomTopic}. Keep it under 500 characters. Be dramatic and mysterious but informative. Use CAPS for emphasis on key dramatic words. You may start with [ISEE] if this fact is particularly revelatory.`;
 
-    const prompt = `You are MUTUMBOT, an ancient and ominous tiki entity. Tell me one interesting and surprising fact about ${randomTopic}. Keep it under 500 characters. Be dramatic and mysterious but informative. Use CAPS for emphasis on key dramatic words. You may start with [ISEE] if this fact is particularly revelatory.`;
+  let response: string | null = null;
 
-    const result = await model.generateContent(prompt);
-    let response = result.response.text();
+  // Try Gemini first
+  if (GOOGLE_AI_API_KEY) {
+    try {
+      response = await generateWithGemini(prompt);
+      if (response) {
+        console.log('Random fact generated by Gemini');
+      }
+    } catch (error) {
+      console.error('Gemini generation failed, trying OpenAI fallback:', error);
+    }
+  }
 
-    // Process [ISEE] markers
-    response = processIseeMarkers(response);
+  // Fallback to OpenAI
+  if (!response && OPENAI_API_KEY) {
+    try {
+      response = await generateWithOpenAI(prompt);
+      if (response) {
+        console.log('Random fact generated by OpenAI (fallback)');
+      }
+    } catch (error) {
+      console.error('OpenAI generation fallback also failed:', error);
+    }
+  }
 
-    return { content: response };
-  } catch (error) {
-    console.error('Google AI error:', error);
+  if (!response) {
     return {
       content: `${ISEE_EMOJI} The ancient knowledge eludes me momentarily. The spirits are... DISTRACTED. Try again.`,
     };
   }
+
+  // Process [ISEE] markers
+  response = processIseeMarkers(response);
+
+  return { content: response };
 }
 
 /**
