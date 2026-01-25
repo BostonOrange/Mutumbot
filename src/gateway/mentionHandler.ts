@@ -87,10 +87,6 @@ export async function handleMentionMessage(message: Message): Promise<void> {
         dmResponse = `${ISEE_EMOJI} I SEE your private offering, **${username}**... The spirits acknowledge your devotion.`;
       }
 
-      // Add comprehensive AI context
-      const aiContext = await getAIContext(userId, channelId);
-      addToContext(channelId, 'model', aiContext);
-
       await message.reply(dmResponse);
       return;
     }
@@ -105,10 +101,6 @@ export async function handleMentionMessage(message: Message): Promise<void> {
       message.content,
       imageAnalysis || undefined
     );
-
-    // Add comprehensive AI context
-    const aiContext = await getAIContext(userId, channelId);
-    addToContext(channelId, 'model', aiContext);
 
     await message.reply(result.content);
     return;
@@ -138,11 +130,12 @@ export async function handleMentionMessage(message: Message): Promise<void> {
     return;
   }
 
-  // General question/conversation - add rich AI context from database
-  const aiContext = await getAIContext(userId, channelId);
-  addToContext(channelId, 'model', aiContext);
+  // General question/conversation - only include database context if question relates to tributes/data
+  const aiContext = needsTributeContext(cleanedContent)
+    ? await getAIContext(userId, channelId)
+    : undefined;
 
-  const response = await handleMention(message.content, channelId);
+  const response = await handleMention(message.content, channelId, aiContext);
   await message.reply(response.content);
 }
 
@@ -180,6 +173,23 @@ function isLeaderboardQuery(content: string): boolean {
     'most devoted', 'top devoted', 'tally'
   ];
   return leaderboardKeywords.some(keyword => content.includes(keyword));
+}
+
+/**
+ * Check if the message relates to tributes/scores/data and needs database context
+ * This avoids injecting tribute data into unrelated conversations
+ */
+function needsTributeContext(content: string): boolean {
+  const tributeKeywords = [
+    'tribute', 'score', 'tally', 'points', 'pts',
+    'devotion', 'offering', 'rank', 'ranking',
+    'how many', 'how much', 'total',
+    'history', 'record', 'past',
+    'friday', 'fridays',
+    'who', 'anyone', 'everybody', 'everyone',
+    'remember', 'last time', 'before',
+  ];
+  return tributeKeywords.some(keyword => content.includes(keyword));
 }
 
 /**

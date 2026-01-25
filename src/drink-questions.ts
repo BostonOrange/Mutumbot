@@ -242,7 +242,8 @@ export async function analyzeImage(
  */
 async function chatWithGemini(
   question: string,
-  channelId?: string
+  channelId?: string,
+  aiContext?: string
 ): Promise<string | null> {
   if (!GOOGLE_AI_API_KEY) {
     return null;
@@ -251,11 +252,16 @@ async function chatWithGemini(
   const genAI = new GoogleGenerativeAI(GOOGLE_AI_API_KEY);
   const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
 
+  // Build system prompt, optionally enriched with database context
+  const systemPrompt = aiContext
+    ? `${MUTUMBOT_SYSTEM_PROMPT}\n\n--- CURRENT DATABASE CONTEXT ---\n${aiContext}`
+    : MUTUMBOT_SYSTEM_PROMPT;
+
   // Build chat history with system prompt and conversation context
   const baseHistory = [
     {
       role: 'user' as const,
-      parts: [{ text: MUTUMBOT_SYSTEM_PROMPT }],
+      parts: [{ text: systemPrompt }],
     },
     {
       role: 'model' as const,
@@ -279,7 +285,8 @@ async function chatWithGemini(
  */
 async function chatWithOpenAI(
   question: string,
-  channelId?: string
+  channelId?: string,
+  aiContext?: string
 ): Promise<string | null> {
   if (!OPENAI_API_KEY) {
     return null;
@@ -287,9 +294,14 @@ async function chatWithOpenAI(
 
   const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
+  // Build system prompt, optionally enriched with database context
+  const systemPrompt = aiContext
+    ? `${MUTUMBOT_SYSTEM_PROMPT}\n\n--- CURRENT DATABASE CONTEXT ---\n${aiContext}`
+    : MUTUMBOT_SYSTEM_PROMPT;
+
   // Build input array for OpenAI responses API
   const input: Array<{ role: string; content: string }> = [
-    { role: 'developer', content: MUTUMBOT_SYSTEM_PROMPT },
+    { role: 'developer', content: systemPrompt },
     { role: 'assistant', content: MUTUMBOT_AWAKENING },
   ];
 
@@ -320,7 +332,8 @@ async function chatWithOpenAI(
  */
 export async function handleDrinkQuestion(
   question: string,
-  channelId?: string
+  channelId?: string,
+  aiContext?: string
 ): Promise<{ content: string }> {
   if (!GOOGLE_AI_API_KEY && !OPENAI_API_KEY) {
     return {
@@ -333,7 +346,7 @@ export async function handleDrinkQuestion(
   // Try Gemini first
   if (GOOGLE_AI_API_KEY) {
     try {
-      response = await chatWithGemini(question, channelId);
+      response = await chatWithGemini(question, channelId, aiContext);
       if (response) {
         console.log('Chat handled by Gemini');
       }
@@ -345,7 +358,7 @@ export async function handleDrinkQuestion(
   // Fallback to OpenAI
   if (!response && OPENAI_API_KEY) {
     try {
-      response = await chatWithOpenAI(question, channelId);
+      response = await chatWithOpenAI(question, channelId, aiContext);
       if (response) {
         console.log('Chat handled by OpenAI (fallback)');
       }
@@ -383,13 +396,14 @@ export async function handleDrinkQuestion(
  */
 export async function handleMention(
   message: string,
-  channelId: string
+  channelId: string,
+  aiContext?: string
 ): Promise<{ content: string }> {
   // If there's actual content beyond the mention, treat it as a question
   const cleanedMessage = message.replace(/<@!?\d+>/g, '').trim();
 
   if (cleanedMessage.length > 0) {
-    return handleDrinkQuestion(cleanedMessage, channelId);
+    return handleDrinkQuestion(cleanedMessage, channelId, aiContext);
   }
 
   // Just a mention with no question - respond mysteriously

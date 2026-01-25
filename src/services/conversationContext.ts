@@ -16,7 +16,7 @@ export interface ContextMessage {
 const contextCache = new Map<string, ContextMessage[]>();
 
 // Maximum number of messages to remember per channel
-const MAX_CONTEXT_MESSAGES = 5;
+const MAX_CONTEXT_MESSAGES = 20;
 
 // Context expiry time in milliseconds (30 minutes)
 const CONTEXT_EXPIRY_MS = 30 * 60 * 1000;
