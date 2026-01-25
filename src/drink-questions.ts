@@ -5,7 +5,6 @@
  * with particular reverence for tiki drinks and rum.
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import OpenAI from 'openai';
 import {
   MUTUMBOT_SYSTEM_PROMPT,
@@ -22,8 +21,18 @@ import {
   ContextPack,
 } from './services/contextBuilder';
 
-const GOOGLE_AI_API_KEY = process.env.GOOGLE_AI_API_KEY;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+// OpenRouter client for Gemini 2.5 Flash Lite
+const openrouter = OPENROUTER_API_KEY
+  ? new OpenAI({
+      baseURL: 'https://openrouter.ai/api/v1',
+      apiKey: OPENROUTER_API_KEY,
+    })
+  : null;
+
+const OPENROUTER_MODEL = 'google/gemini-2.5-flash-lite-preview-06-17';
 
 // Tribute scoring system
 export const TRIBUTE_SCORES = {
@@ -103,31 +112,40 @@ function parseImageAnalysisResponse(responseText: string): ImageAnalysis | null 
 }
 
 /**
- * Analyze image using Google Gemini
+ * Analyze image using OpenRouter (Gemini 2.5 Flash Lite)
  */
-async function analyzeImageWithGemini(
+async function analyzeImageWithOpenRouter(
   base64: string,
   contentType: string,
   prompt: string
 ): Promise<ImageAnalysis | null> {
-  if (!GOOGLE_AI_API_KEY) {
+  if (!openrouter) {
     return null;
   }
 
-  const genAI = new GoogleGenerativeAI(GOOGLE_AI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
-
-  const result = await model.generateContent([
-    {
-      inlineData: {
-        mimeType: contentType,
-        data: base64,
+  const response = await openrouter.chat.completions.create({
+    model: OPENROUTER_MODEL,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            image_url: {
+              url: `data:${contentType};base64,${base64}`,
+            },
+          },
+          { type: 'text', text: prompt },
+        ],
       },
-    },
-    { text: prompt },
-  ]);
+    ],
+  });
 
-  const responseText = result.response.text().trim();
+  const responseText = response.choices[0]?.message?.content?.trim();
+  if (!responseText) {
+    return null;
+  }
+
   return parseImageAnalysisResponse(responseText);
 }
 
@@ -172,7 +190,7 @@ async function analyzeImageWithOpenAI(
 
 /**
  * Analyze an image and generate a full AI response for the tribute
- * Uses Gemini as primary, falls back to OpenAI if Gemini fails (e.g., rate limit)
+ * Uses OpenRouter (Gemini 2.5 Flash Lite) as primary, falls back to OpenAI if it fails
  */
 export async function analyzeImage(
   imageUrl: string,
@@ -181,12 +199,12 @@ export async function analyzeImage(
   isDM?: boolean
 ): Promise<ImageAnalysis | null> {
   // Need at least one AI provider
-  if (!GOOGLE_AI_API_KEY && !OPENAI_API_KEY) {
-    console.error('No AI API keys configured for image analysis. GOOGLE_AI_API_KEY:', !!GOOGLE_AI_API_KEY, 'OPENAI_API_KEY:', !!OPENAI_API_KEY);
+  if (!OPENROUTER_API_KEY && !OPENAI_API_KEY) {
+    console.error('No AI API keys configured for image analysis. OPENROUTER_API_KEY:', !!OPENROUTER_API_KEY, 'OPENAI_API_KEY:', !!OPENAI_API_KEY);
     return null;
   }
 
-  console.log('analyzeImage called. Gemini available:', !!GOOGLE_AI_API_KEY, 'OpenAI available:', !!OPENAI_API_KEY);
+  console.log('analyzeImage called. OpenRouter available:', !!OPENROUTER_API_KEY, 'OpenAI available:', !!OPENAI_API_KEY);
 
   try {
     // Fetch the image from Discord CDN
@@ -203,18 +221,18 @@ export async function analyzeImage(
 
     console.log('Image fetched successfully. Size:', base64.length, 'Content-Type:', contentType);
 
-    // Try Gemini first (primary)
-    if (GOOGLE_AI_API_KEY) {
+    // Try OpenRouter first (primary - Gemini 2.5 Flash Lite)
+    if (OPENROUTER_API_KEY) {
       try {
-        console.log('Attempting Gemini image analysis...');
-        const geminiResult = await analyzeImageWithGemini(base64, contentType, prompt);
-        if (geminiResult) {
-          console.log('Image analyzed with Gemini. Category:', geminiResult.category, 'Score:', geminiResult.score);
-          return geminiResult;
+        console.log('Attempting OpenRouter (Gemini 2.5 Flash Lite) image analysis...');
+        const openrouterResult = await analyzeImageWithOpenRouter(base64, contentType, prompt);
+        if (openrouterResult) {
+          console.log('Image analyzed with OpenRouter. Category:', openrouterResult.category, 'Score:', openrouterResult.score);
+          return openrouterResult;
         }
-        console.error('Gemini returned null result');
+        console.error('OpenRouter returned null result');
       } catch (error) {
-        console.error('Gemini analysis failed, trying OpenAI fallback. Error:', (error as Error).message || error);
+        console.error('OpenRouter analysis failed, trying OpenAI fallback. Error:', (error as Error).message || error);
       }
     }
 
@@ -242,21 +260,18 @@ export async function analyzeImage(
 }
 
 /**
- * Chat with Gemini (with conversation history)
- * Now supports both in-memory context and database transcript context
+ * Chat with OpenRouter (Gemini 2.5 Flash Lite) with conversation history
+ * Supports both in-memory context and database transcript context
  */
-async function chatWithGemini(
+async function chatWithOpenRouter(
   question: string,
   channelId?: string,
   aiContext?: string,
   transcript?: string
 ): Promise<string | null> {
-  if (!GOOGLE_AI_API_KEY) {
+  if (!openrouter) {
     return null;
   }
-
-  const genAI = new GoogleGenerativeAI(GOOGLE_AI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
 
   // Build system prompt with optional database context (tribute stats) and transcript
   let systemPrompt = MUTUMBOT_SYSTEM_PROMPT;
@@ -271,28 +286,32 @@ async function chatWithGemini(
     systemPrompt += `\n\n--- RECENT CHANNEL CONVERSATION ---\nThis is the recent conversation in this channel. Use this to understand context:\n${transcript}`;
   }
 
-  // Build chat history with system prompt
-  const baseHistory = [
-    {
-      role: 'user' as const,
-      parts: [{ text: systemPrompt }],
-    },
-    {
-      role: 'model' as const,
-      parts: [{ text: MUTUMBOT_AWAKENING }],
-    },
+  // Build messages array
+  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+    { role: 'system', content: systemPrompt },
+    { role: 'assistant', content: MUTUMBOT_AWAKENING },
   ];
 
   // If we have a transcript, we don't need the in-memory context
   // Otherwise, fall back to in-memory for backward compatibility
-  const contextHistory = (!transcript && channelId) ? formatContextForAI(channelId) : [];
+  if (!transcript && channelId) {
+    const contextHistory = formatContextForAI(channelId);
+    for (const entry of contextHistory) {
+      const role = entry.role === 'user' ? 'user' : 'assistant';
+      const text = entry.parts.map((p: { text: string }) => p.text).join('');
+      messages.push({ role, content: text });
+    }
+  }
 
-  const chat = model.startChat({
-    history: [...baseHistory, ...contextHistory],
+  // Add the current question
+  messages.push({ role: 'user', content: question });
+
+  const response = await openrouter.chat.completions.create({
+    model: OPENROUTER_MODEL,
+    messages,
   });
 
-  const result = await chat.sendMessage(question);
-  return result.response.text();
+  return response.choices[0]?.message?.content || null;
 }
 
 /**
@@ -354,7 +373,7 @@ async function chatWithOpenAI(
 
 /**
  * Handle the /ask command using AI with Mutumbot personality
- * Uses Gemini as primary, falls back to OpenAI if Gemini fails
+ * Uses OpenRouter (Gemini 2.5 Flash Lite) as primary, falls back to OpenAI if it fails
  *
  * @param question - The user's question
  * @param channelId - Channel ID for context
@@ -367,7 +386,7 @@ export async function handleDrinkQuestion(
   aiContext?: string,
   messageId?: string
 ): Promise<{ content: string }> {
-  if (!GOOGLE_AI_API_KEY && !OPENAI_API_KEY) {
+  if (!OPENROUTER_API_KEY && !OPENAI_API_KEY) {
     return {
       content: `${ISEE_EMOJI} The spirits are SILENT. The ancient connection to the AI realm has not been established. Summon the bot administrator to configure the sacred API key.`,
     };
@@ -390,15 +409,15 @@ export async function handleDrinkQuestion(
 
   let response: string | null = null;
 
-  // Try Gemini first
-  if (GOOGLE_AI_API_KEY) {
+  // Try OpenRouter first (Gemini 2.5 Flash Lite)
+  if (OPENROUTER_API_KEY) {
     try {
-      response = await chatWithGemini(question, channelId, aiContext, transcript);
+      response = await chatWithOpenRouter(question, channelId, aiContext, transcript);
       if (response) {
-        console.log('Chat handled by Gemini');
+        console.log('Chat handled by OpenRouter (Gemini 2.5 Flash Lite)');
       }
     } catch (error) {
-      console.error('Gemini chat failed, trying OpenAI fallback:', error);
+      console.error('OpenRouter chat failed, trying OpenAI fallback:', error);
     }
   }
 
@@ -475,18 +494,19 @@ export async function handleMention(
 }
 
 /**
- * Generate simple text with Gemini
+ * Generate simple text with OpenRouter (Gemini 2.5 Flash Lite)
  */
-async function generateWithGemini(prompt: string): Promise<string | null> {
-  if (!GOOGLE_AI_API_KEY) {
+async function generateWithOpenRouter(prompt: string): Promise<string | null> {
+  if (!openrouter) {
     return null;
   }
 
-  const genAI = new GoogleGenerativeAI(GOOGLE_AI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
+  const response = await openrouter.chat.completions.create({
+    model: OPENROUTER_MODEL,
+    messages: [{ role: 'user', content: prompt }],
+  });
 
-  const result = await model.generateContent(prompt);
-  return result.response.text();
+  return response.choices[0]?.message?.content || null;
 }
 
 /**
@@ -509,10 +529,10 @@ async function generateWithOpenAI(prompt: string): Promise<string | null> {
 
 /**
  * Handle the legacy /drink random command - random tiki/drink fact
- * Uses Gemini as primary, falls back to OpenAI if Gemini fails
+ * Uses OpenRouter (Gemini 2.5 Flash Lite) as primary, falls back to OpenAI if it fails
  */
 export async function handleRandomDrinkFact(): Promise<{ content: string }> {
-  if (!GOOGLE_AI_API_KEY && !OPENAI_API_KEY) {
+  if (!OPENROUTER_API_KEY && !OPENAI_API_KEY) {
     return {
       content: `${ISEE_EMOJI} The spirits are SILENT. The sacred API connection is not configured.`,
     };
@@ -534,15 +554,15 @@ export async function handleRandomDrinkFact(): Promise<{ content: string }> {
 
   let response: string | null = null;
 
-  // Try Gemini first
-  if (GOOGLE_AI_API_KEY) {
+  // Try OpenRouter first (Gemini 2.5 Flash Lite)
+  if (OPENROUTER_API_KEY) {
     try {
-      response = await generateWithGemini(prompt);
+      response = await generateWithOpenRouter(prompt);
       if (response) {
-        console.log('Random fact generated by Gemini');
+        console.log('Random fact generated by OpenRouter (Gemini 2.5 Flash Lite)');
       }
     } catch (error) {
-      console.error('Gemini generation failed, trying OpenAI fallback:', error);
+      console.error('OpenRouter generation failed, trying OpenAI fallback:', error);
     }
   }
 
