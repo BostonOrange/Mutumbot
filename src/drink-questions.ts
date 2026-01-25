@@ -128,7 +128,7 @@ async function analyzeImageWithGemini(
 }
 
 /**
- * Analyze image using OpenAI GPT-4o (fallback)
+ * Analyze image using OpenAI (fallback)
  */
 async function analyzeImageWithOpenAI(
   base64: string,
@@ -141,29 +141,24 @@ async function analyzeImageWithOpenAI(
 
   const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-  const response = await openai.chat.completions.create({
+  const response = await openai.responses.create({
     model: 'gpt-5-nano-2025-08-07',
-    messages: [
+    input: [
       {
         role: 'user',
         content: [
+          { type: 'input_text', text: prompt },
           {
-            type: 'image_url',
-            image_url: {
-              url: `data:${contentType};base64,${base64}`,
-            },
-          },
-          {
-            type: 'text',
-            text: prompt,
+            type: 'input_image',
+            image_url: `data:${contentType};base64,${base64}`,
+            detail: 'auto',
           },
         ],
       },
     ],
-    max_tokens: 500,
   });
 
-  const responseText = response.choices[0]?.message?.content?.trim();
+  const responseText = response.output_text?.trim();
   if (!responseText) {
     return null;
   }
@@ -183,15 +178,17 @@ export async function analyzeImage(
 ): Promise<ImageAnalysis | null> {
   // Need at least one AI provider
   if (!GOOGLE_AI_API_KEY && !OPENAI_API_KEY) {
-    console.error('No AI API keys configured for image analysis');
+    console.error('No AI API keys configured for image analysis. GOOGLE_AI_API_KEY:', !!GOOGLE_AI_API_KEY, 'OPENAI_API_KEY:', !!OPENAI_API_KEY);
     return null;
   }
+
+  console.log('analyzeImage called. Gemini available:', !!GOOGLE_AI_API_KEY, 'OpenAI available:', !!OPENAI_API_KEY);
 
   try {
     // Fetch the image from Discord CDN
     const response = await fetch(imageUrl);
     if (!response.ok) {
-      console.error('Failed to fetch image:', response.status);
+      console.error('Failed to fetch image:', response.status, response.statusText);
       return null;
     }
 
@@ -200,36 +197,42 @@ export async function analyzeImage(
     const contentType = response.headers.get('content-type') || 'image/jpeg';
     const prompt = buildImageAnalysisPrompt(userMessage, isFriday, isDM);
 
+    console.log('Image fetched successfully. Size:', base64.length, 'Content-Type:', contentType);
+
     // Try Gemini first (primary)
     if (GOOGLE_AI_API_KEY) {
       try {
+        console.log('Attempting Gemini image analysis...');
         const geminiResult = await analyzeImageWithGemini(base64, contentType, prompt);
         if (geminiResult) {
-          console.log('Image analyzed with Gemini');
+          console.log('Image analyzed with Gemini. Category:', geminiResult.category, 'Score:', geminiResult.score);
           return geminiResult;
         }
+        console.error('Gemini returned null result');
       } catch (error) {
-        console.error('Gemini analysis failed, trying OpenAI fallback:', error);
+        console.error('Gemini analysis failed, trying OpenAI fallback. Error:', (error as Error).message || error);
       }
     }
 
     // Fallback to OpenAI
     if (OPENAI_API_KEY) {
       try {
+        console.log('Attempting OpenAI image analysis (fallback)...');
         const openaiResult = await analyzeImageWithOpenAI(base64, contentType, prompt);
         if (openaiResult) {
-          console.log('Image analyzed with OpenAI (fallback)');
+          console.log('Image analyzed with OpenAI. Category:', openaiResult.category, 'Score:', openaiResult.score);
           return openaiResult;
         }
+        console.error('OpenAI returned null result');
       } catch (error) {
-        console.error('OpenAI fallback also failed:', error);
+        console.error('OpenAI fallback also failed. Error:', (error as Error).message || error);
       }
     }
 
     console.error('All AI providers failed for image analysis');
     return null;
   } catch (error) {
-    console.error('Image analysis error:', error);
+    console.error('Image analysis error:', (error as Error).message || error);
     return null;
   }
 }
@@ -284,9 +287,9 @@ async function chatWithOpenAI(
 
   const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-  // Build messages array for OpenAI
-  const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-    { role: 'system', content: MUTUMBOT_SYSTEM_PROMPT },
+  // Build input array for OpenAI responses API
+  const input: Array<{ role: string; content: string }> = [
+    { role: 'developer', content: MUTUMBOT_SYSTEM_PROMPT },
     { role: 'assistant', content: MUTUMBOT_AWAKENING },
   ];
 
@@ -296,20 +299,19 @@ async function chatWithOpenAI(
     for (const entry of contextHistory) {
       const role = entry.role === 'user' ? 'user' : 'assistant';
       const text = entry.parts.map((p: { text: string }) => p.text).join('');
-      messages.push({ role, content: text });
+      input.push({ role, content: text });
     }
   }
 
   // Add the current question
-  messages.push({ role: 'user', content: question });
+  input.push({ role: 'user', content: question });
 
-  const response = await openai.chat.completions.create({
+  const response = await openai.responses.create({
     model: 'gpt-5-nano-2025-08-07',
-    messages,
-    max_tokens: 1000,
+    input: input as any,
   });
 
-  return response.choices[0]?.message?.content || null;
+  return response.output_text || null;
 }
 
 /**
@@ -429,13 +431,12 @@ async function generateWithOpenAI(prompt: string): Promise<string | null> {
 
   const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-  const response = await openai.chat.completions.create({
+  const response = await openai.responses.create({
     model: 'gpt-5-nano-2025-08-07',
-    messages: [{ role: 'user', content: prompt }],
-    max_tokens: 500,
+    input: prompt,
   });
 
-  return response.choices[0]?.message?.content || null;
+  return response.output_text || null;
 }
 
 /**
