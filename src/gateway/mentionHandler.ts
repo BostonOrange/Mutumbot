@@ -87,10 +87,6 @@ export async function handleMentionMessage(message: Message): Promise<void> {
         dmResponse = `${ISEE_EMOJI} I SEE your private offering, **${username}**... The spirits acknowledge your devotion.`;
       }
 
-      // Add comprehensive AI context
-      const aiContext = await getAIContext(userId, channelId);
-      addToContext(channelId, 'model', aiContext);
-
       await message.reply(dmResponse);
       return;
     }
@@ -105,10 +101,6 @@ export async function handleMentionMessage(message: Message): Promise<void> {
       message.content,
       imageAnalysis || undefined
     );
-
-    // Add comprehensive AI context
-    const aiContext = await getAIContext(userId, channelId);
-    addToContext(channelId, 'model', aiContext);
 
     await message.reply(result.content);
     return;
@@ -138,11 +130,10 @@ export async function handleMentionMessage(message: Message): Promise<void> {
     return;
   }
 
-  // General question/conversation - add rich AI context from database
+  // General question/conversation - pass database context to AI via system prompt
   const aiContext = await getAIContext(userId, channelId);
-  addToContext(channelId, 'model', aiContext);
 
-  const response = await handleMention(message.content, channelId);
+  const response = await handleMention(message.content, channelId, aiContext);
   await message.reply(response.content);
 }
 
