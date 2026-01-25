@@ -17,6 +17,10 @@ import {
   addToContext,
   formatContextForAI,
 } from './services/conversationContext';
+import {
+  buildContextPack,
+  ContextPack,
+} from './services/contextBuilder';
 
 const GOOGLE_AI_API_KEY = process.env.GOOGLE_AI_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -239,11 +243,13 @@ export async function analyzeImage(
 
 /**
  * Chat with Gemini (with conversation history)
+ * Now supports both in-memory context and database transcript context
  */
 async function chatWithGemini(
   question: string,
   channelId?: string,
-  aiContext?: string
+  aiContext?: string,
+  transcript?: string
 ): Promise<string | null> {
   if (!GOOGLE_AI_API_KEY) {
     return null;
@@ -252,12 +258,20 @@ async function chatWithGemini(
   const genAI = new GoogleGenerativeAI(GOOGLE_AI_API_KEY);
   const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
 
-  // Build system prompt, optionally enriched with database context
-  const systemPrompt = aiContext
-    ? `${MUTUMBOT_SYSTEM_PROMPT}\n\n--- CURRENT DATABASE CONTEXT ---\n${aiContext}`
-    : MUTUMBOT_SYSTEM_PROMPT;
+  // Build system prompt with optional database context (tribute stats) and transcript
+  let systemPrompt = MUTUMBOT_SYSTEM_PROMPT;
 
-  // Build chat history with system prompt and conversation context
+  // Add database context (tribute statistics, leaderboards)
+  if (aiContext) {
+    systemPrompt += `\n\n--- CURRENT DATABASE CONTEXT ---\n${aiContext}`;
+  }
+
+  // Add channel transcript (recent conversation history from DB)
+  if (transcript) {
+    systemPrompt += `\n\n--- RECENT CHANNEL CONVERSATION ---\nThis is the recent conversation in this channel. Use this to understand context:\n${transcript}`;
+  }
+
+  // Build chat history with system prompt
   const baseHistory = [
     {
       role: 'user' as const,
@@ -269,8 +283,9 @@ async function chatWithGemini(
     },
   ];
 
-  // Add conversation context if we have a channel ID
-  const contextHistory = channelId ? formatContextForAI(channelId) : [];
+  // If we have a transcript, we don't need the in-memory context
+  // Otherwise, fall back to in-memory for backward compatibility
+  const contextHistory = (!transcript && channelId) ? formatContextForAI(channelId) : [];
 
   const chat = model.startChat({
     history: [...baseHistory, ...contextHistory],
@@ -282,11 +297,13 @@ async function chatWithGemini(
 
 /**
  * Chat with OpenAI (with conversation history) - fallback
+ * Now supports both in-memory context and database transcript context
  */
 async function chatWithOpenAI(
   question: string,
   channelId?: string,
-  aiContext?: string
+  aiContext?: string,
+  transcript?: string
 ): Promise<string | null> {
   if (!OPENAI_API_KEY) {
     return null;
@@ -294,10 +311,18 @@ async function chatWithOpenAI(
 
   const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-  // Build system prompt, optionally enriched with database context
-  const systemPrompt = aiContext
-    ? `${MUTUMBOT_SYSTEM_PROMPT}\n\n--- CURRENT DATABASE CONTEXT ---\n${aiContext}`
-    : MUTUMBOT_SYSTEM_PROMPT;
+  // Build system prompt with optional database context and transcript
+  let systemPrompt = MUTUMBOT_SYSTEM_PROMPT;
+
+  // Add database context (tribute statistics, leaderboards)
+  if (aiContext) {
+    systemPrompt += `\n\n--- CURRENT DATABASE CONTEXT ---\n${aiContext}`;
+  }
+
+  // Add channel transcript (recent conversation history from DB)
+  if (transcript) {
+    systemPrompt += `\n\n--- RECENT CHANNEL CONVERSATION ---\nThis is the recent conversation in this channel. Use this to understand context:\n${transcript}`;
+  }
 
   // Build input array for OpenAI responses API
   const input: Array<{ role: string; content: string }> = [
@@ -305,8 +330,9 @@ async function chatWithOpenAI(
     { role: 'assistant', content: MUTUMBOT_AWAKENING },
   ];
 
-  // Add conversation context if we have a channel ID
-  if (channelId) {
+  // If we have a transcript, we don't need the in-memory context
+  // Otherwise, fall back to in-memory for backward compatibility
+  if (!transcript && channelId) {
     const contextHistory = formatContextForAI(channelId);
     for (const entry of contextHistory) {
       const role = entry.role === 'user' ? 'user' : 'assistant';
@@ -329,11 +355,17 @@ async function chatWithOpenAI(
 /**
  * Handle the /ask command using AI with Mutumbot personality
  * Uses Gemini as primary, falls back to OpenAI if Gemini fails
+ *
+ * @param question - The user's question
+ * @param channelId - Channel ID for context
+ * @param aiContext - Optional tribute/stats context from database
+ * @param messageId - Optional trigger message ID for building conversation transcript
  */
 export async function handleDrinkQuestion(
   question: string,
   channelId?: string,
-  aiContext?: string
+  aiContext?: string,
+  messageId?: string
 ): Promise<{ content: string }> {
   if (!GOOGLE_AI_API_KEY && !OPENAI_API_KEY) {
     return {
@@ -341,12 +373,27 @@ export async function handleDrinkQuestion(
     };
   }
 
+  // Build conversation transcript from database if we have message ID
+  let transcript: string | undefined;
+  if (channelId && messageId) {
+    try {
+      const contextPack = await buildContextPack(channelId, messageId);
+      if (contextPack && contextPack.transcript) {
+        transcript = contextPack.transcript;
+        console.log(`[Context] Built transcript: ${contextPack.messageCount} messages`);
+      }
+    } catch (error) {
+      console.error('[Context] Failed to build transcript:', error);
+      // Continue without transcript - will fall back to in-memory context
+    }
+  }
+
   let response: string | null = null;
 
   // Try Gemini first
   if (GOOGLE_AI_API_KEY) {
     try {
-      response = await chatWithGemini(question, channelId, aiContext);
+      response = await chatWithGemini(question, channelId, aiContext, transcript);
       if (response) {
         console.log('Chat handled by Gemini');
       }
@@ -358,7 +405,7 @@ export async function handleDrinkQuestion(
   // Fallback to OpenAI
   if (!response && OPENAI_API_KEY) {
     try {
-      response = await chatWithOpenAI(question, channelId, aiContext);
+      response = await chatWithOpenAI(question, channelId, aiContext, transcript);
       if (response) {
         console.log('Chat handled by OpenAI (fallback)');
       }
@@ -376,7 +423,8 @@ export async function handleDrinkQuestion(
   // Process [ISEE] markers in the response
   response = processIseeMarkers(response);
 
-  // Store this exchange in context for future reference
+  // Store this exchange in in-memory context as fallback
+  // (Database context is stored via message ingestor)
   if (channelId) {
     addToContext(channelId, 'user', question);
     addToContext(channelId, 'model', response);
@@ -393,17 +441,23 @@ export async function handleDrinkQuestion(
 /**
  * Handle a general @mention without a specific question
  * Used by the gateway bot
+ *
+ * @param message - The raw message content
+ * @param channelId - Channel ID for context
+ * @param aiContext - Optional tribute/stats context from database
+ * @param messageId - Optional trigger message ID for building conversation transcript
  */
 export async function handleMention(
   message: string,
   channelId: string,
-  aiContext?: string
+  aiContext?: string,
+  messageId?: string
 ): Promise<{ content: string }> {
   // If there's actual content beyond the mention, treat it as a question
   const cleanedMessage = message.replace(/<@!?\d+>/g, '').trim();
 
   if (cleanedMessage.length > 0) {
-    return handleDrinkQuestion(cleanedMessage, channelId, aiContext);
+    return handleDrinkQuestion(cleanedMessage, channelId, aiContext, messageId);
   }
 
   // Just a mention with no question - respond mysteriously

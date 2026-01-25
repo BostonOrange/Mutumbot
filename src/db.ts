@@ -74,6 +74,37 @@ export async function initializeDatabase(): Promise<void> {
     await db`CREATE INDEX IF NOT EXISTS idx_tributes_created ON tributes(created_at DESC)`;
     await db`CREATE INDEX IF NOT EXISTS idx_tributes_category ON tributes(category)`;
 
+    // Create discord_messages_recent table for conversation context
+    // Short-lived message history for building LLM context
+    await db`
+      CREATE TABLE IF NOT EXISTS discord_messages_recent (
+        message_id VARCHAR(255) PRIMARY KEY,
+        channel_id VARCHAR(255) NOT NULL,
+        guild_id VARCHAR(255),
+        author_id VARCHAR(255) NOT NULL,
+        author_name VARCHAR(255) NOT NULL,
+        is_bot BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+        ingested_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        content TEXT,
+        mentions_bot BOOLEAN DEFAULT FALSE,
+        reply_to_message_id VARCHAR(255),
+        has_image BOOLEAN DEFAULT FALSE,
+        has_attachments BOOLEAN DEFAULT FALSE,
+        attachments JSONB DEFAULT '[]',
+        is_deleted BOOLEAN DEFAULT FALSE,
+        edited_at TIMESTAMP WITH TIME ZONE
+      )
+    `;
+
+    // Create indexes for efficient context queries
+    // Primary index: fetch last N messages in a channel ordered by time
+    await db`CREATE INDEX IF NOT EXISTS idx_messages_channel_time ON discord_messages_recent(channel_id, created_at DESC)`;
+    // For finding last bot exchange (when bot was mentioned)
+    await db`CREATE INDEX IF NOT EXISTS idx_messages_channel_bot ON discord_messages_recent(channel_id, mentions_bot, created_at DESC)`;
+    // For cleanup by age
+    await db`CREATE INDEX IF NOT EXISTS idx_messages_ingested ON discord_messages_recent(ingested_at)`;
+
     console.log('Database tables initialized successfully');
   } catch (error) {
     console.error('Failed to initialize database:', error);

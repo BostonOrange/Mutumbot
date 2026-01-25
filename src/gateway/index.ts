@@ -3,12 +3,22 @@
  *
  * Discord.js gateway bot for handling @mentions and scheduled events.
  * Deployed separately to Railway (Vercel handles slash commands).
+ *
+ * Now includes message ingestion for building LLM context from
+ * recent channel history.
  */
 
 import { Client, GatewayIntentBits, Events, Partials } from 'discord.js';
 import { handleMentionMessage } from './mentionHandler';
 import { startFridayCron, postImmediateDemand } from './fridayCron';
+import { startRetentionJob } from './retentionJob';
 import { initializeDatabase, isDatabaseAvailable } from '../db';
+import {
+  ingestMessageCreate,
+  ingestMessageUpdate,
+  ingestMessageDelete,
+  ingestBotMessage,
+} from '../services/messageIngestor';
 
 // Environment variables
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -46,6 +56,10 @@ client.once(Events.ClientReady, async readyClient => {
     console.log('Continuing with in-memory storage...');
   }
 
+  // Start message retention cleanup job (runs every hour)
+  startRetentionJob();
+  console.log('Message retention job started (purges messages older than 4h)');
+
   // Start Friday cron job if party channel is configured
   if (PARTY_CHANNEL_ID) {
     startFridayCron(client, PARTY_CHANNEL_ID);
@@ -63,7 +77,17 @@ client.once(Events.ClientReady, async readyClient => {
 
 // Event: Message received
 client.on(Events.MessageCreate, async message => {
-  // Ignore messages from bots (including self)
+  const botUserId = client.user?.id || '';
+
+  // Ingest ALL messages (including bot messages) for context building
+  // This runs async - we don't await to avoid slowing down responses
+  if (!message.author.bot) {
+    ingestMessageCreate(message, botUserId).catch(err =>
+      console.error('[Ingestor] Error ingesting message:', err)
+    );
+  }
+
+  // Ignore messages from bots (including self) for response handling
   if (message.author.bot) return;
 
   // Check if this is a DM
@@ -76,11 +100,41 @@ client.on(Events.MessageCreate, async message => {
   if (isDM || wasMentioned) {
     console.log(`[MUTUMBOT] ${isDM ? 'DM' : 'Mention'} from ${message.author.tag}: "${message.content.slice(0, 50)}..."`);
     try {
-      await handleMentionMessage(message);
+      const reply = await handleMentionMessage(message);
+
+      // Ingest the bot's own reply for context continuity
+      if (reply) {
+        ingestBotMessage(reply, botUserId).catch(err =>
+          console.error('[Ingestor] Error ingesting bot reply:', err)
+        );
+      }
     } catch (error) {
       console.error('Error handling message:', error);
     }
   }
+});
+
+// Event: Message edited
+client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
+  // Ingest updates to keep context accurate
+  if (newMessage.partial) {
+    try {
+      await newMessage.fetch();
+    } catch {
+      return; // Can't fetch, skip
+    }
+  }
+  ingestMessageUpdate(newMessage).catch(err =>
+    console.error('[Ingestor] Error updating message:', err)
+  );
+});
+
+// Event: Message deleted
+client.on(Events.MessageDelete, async message => {
+  // Mark as deleted in context store
+  ingestMessageDelete(message.id).catch(err =>
+    console.error('[Ingestor] Error marking message deleted:', err)
+  );
 });
 
 // Event: Error handling

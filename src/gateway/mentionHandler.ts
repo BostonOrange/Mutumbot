@@ -35,8 +35,9 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 /**
  * Handle a message that mentions Mutumbot
+ * Returns the reply message for context ingestion
  */
-export async function handleMentionMessage(message: Message): Promise<void> {
+export async function handleMentionMessage(message: Message): Promise<Message | null> {
   const guildId = message.guild?.id || 'dm';
   const channelId = message.channel.id;
   const userId = message.author.id;
@@ -87,8 +88,8 @@ export async function handleMentionMessage(message: Message): Promise<void> {
         dmResponse = `${ISEE_EMOJI} I SEE your private offering, **${username}**... The spirits acknowledge your devotion.`;
       }
 
-      await message.reply(dmResponse);
-      return;
+      const reply = await message.reply(dmResponse);
+      return reply;
     }
 
     // Public channel tribute
@@ -102,8 +103,8 @@ export async function handleMentionMessage(message: Message): Promise<void> {
       imageAnalysis || undefined
     );
 
-    await message.reply(result.content);
-    return;
+    const reply = await message.reply(result.content);
+    return reply;
   }
 
   // No image - check for status/tally keywords first
@@ -112,22 +113,22 @@ export async function handleMentionMessage(message: Message): Promise<void> {
   // Check for status query
   if (isStatusQuery(cleanedContent)) {
     const statusResponse = await handleStatusQuery(userId, username, guildId);
-    await message.reply(statusResponse);
-    return;
+    const reply = await message.reply(statusResponse);
+    return reply;
   }
 
   // Check for personal stats query
   if (isPersonalStatsQuery(cleanedContent)) {
     const statsResponse = await handlePersonalStatsQuery(userId, username);
-    await message.reply(statsResponse);
-    return;
+    const reply = await message.reply(statsResponse);
+    return reply;
   }
 
   // Check for leaderboard query
   if (isLeaderboardQuery(cleanedContent)) {
     const leaderboardResponse = await handleLeaderboardQuery();
-    await message.reply(leaderboardResponse);
-    return;
+    const reply = await message.reply(leaderboardResponse);
+    return reply;
   }
 
   // General question/conversation - only include database context if question relates to tributes/data
@@ -135,8 +136,10 @@ export async function handleMentionMessage(message: Message): Promise<void> {
     ? await getAIContext(userId, channelId)
     : undefined;
 
-  const response = await handleMention(message.content, channelId, aiContext);
-  await message.reply(response.content);
+  // Pass message ID for building conversation transcript from database
+  const response = await handleMention(message.content, channelId, aiContext, message.id);
+  const reply = await message.reply(response.content);
+  return reply;
 }
 
 /**
