@@ -32,7 +32,7 @@ const openrouter = OPENROUTER_API_KEY
     })
   : null;
 
-const OPENROUTER_MODEL = 'google/gemini-2.5-flash-lite-preview-06-17';
+const OPENROUTER_MODEL = 'google/gemini-2.5-flash-lite';
 
 // Tribute scoring system
 export const TRIBUTE_SCORES = {
