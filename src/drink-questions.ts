@@ -63,7 +63,7 @@ Analyze this image and respond in EXACTLY this JSON format (no markdown, just ra
   "description": "What you SEE in the image - be specific about the drink, vessel, garnishes, setting",
   "category": "TIKI" or "COCKTAIL" or "BEER_WINE" or "OTHER",
   "drinkName": "name of the drink if identifiable, or null",
-  "response": "Your full in-character response as MUTUMBOT (2-3 sentences)"
+  "response": "Your in-character response as MUTUMBOT (1-2 SHORT sentences, max 200 chars)"
 }
 
 CATEGORY RULES (for scoring):
@@ -85,7 +85,7 @@ ${isFriday ? '- This is FRIDAY - the sacred ritual day! Mention this.' : ''}
 ${isDM ? '- This is a private DM tribute - these remain between you and the mortal, separate from the public competition.' : ''}
 ${userMessage ? `- The mortal who sent this said: "${userMessage}"` : ''}
 
-Keep your response mysterious and theatrical but not too long.`;
+Keep response SHORT (under 200 chars). Do NOT ask follow-up questions or prompt about other drinks.`;
 }
 
 /**
@@ -479,13 +479,13 @@ export async function handleMention(
     return handleDrinkQuestion(cleanedMessage, channelId, aiContext, messageId);
   }
 
-  // Just a mention with no question - respond mysteriously
+  // Just a mention with no question - respond mysteriously but briefly
   const responses = [
-    `${ISEE_EMOJI} You have summoned the ancient one. What knowledge do you seek from the TIKI DEPTHS?`,
-    `${ISEE_EMOJI} I AWAKEN... The spirits stir. Speak your query, mortal.`,
-    `${ISEE_EMOJI} You dare invoke my name? Very well... ASK, and the ancient wisdom shall flow.`,
-    `The spirits sense your presence. What do you seek from MUTUMBOT?`,
-    `${ISEE_EMOJI} I SEE you, mortal. Do you require the ancient knowledge of libations?`,
+    `${ISEE_EMOJI} You have summoned the ancient one. Speak.`,
+    `${ISEE_EMOJI} I AWAKEN... What is it, mortal?`,
+    `${ISEE_EMOJI} You dare invoke my name? Speak your purpose.`,
+    `The spirits sense your presence. What do you seek?`,
+    `${ISEE_EMOJI} I SEE you, mortal. What brings you here?`,
   ];
 
   return {
