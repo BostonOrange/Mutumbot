@@ -21,9 +21,8 @@ import {
 } from './threads';
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-// OpenRouter client for summarization
+// OpenRouter client for summarization (the only AI provider)
 const openrouter = OPENROUTER_API_KEY
   ? new OpenAI({
       baseURL: 'https://openrouter.ai/api/v1',
@@ -91,38 +90,25 @@ Create an updated summary (max 2000 characters) that merges the existing summary
 }
 
 /**
- * Generate summary using AI
+ * Generate summary using OpenRouter (the only AI provider)
  */
 async function generateSummary(prompt: string): Promise<string | null> {
-  // Try OpenRouter first
-  if (openrouter) {
-    try {
-      const response = await openrouter.chat.completions.create({
-        model: SUMMARIZATION_MODEL,
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 500,
-      });
-      return response.choices[0]?.message?.content || null;
-    } catch (error) {
-      console.error('[Summarizer] OpenRouter failed:', error);
-    }
+  if (!openrouter) {
+    console.error('[Summarizer] OpenRouter not configured');
+    return null;
   }
 
-  // Fallback to OpenAI
-  if (OPENAI_API_KEY) {
-    try {
-      const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-      const response = await openai.responses.create({
-        model: 'gpt-5-nano-2025-08-07',
-        input: prompt,
-      });
-      return response.output_text || null;
-    } catch (error) {
-      console.error('[Summarizer] OpenAI fallback failed:', error);
-    }
+  try {
+    const response = await openrouter.chat.completions.create({
+      model: SUMMARIZATION_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 500,
+    });
+    return response.choices[0]?.message?.content || null;
+  } catch (error) {
+    console.error('[Summarizer] OpenRouter failed:', error);
+    return null;
   }
-
-  return null;
 }
 
 /**

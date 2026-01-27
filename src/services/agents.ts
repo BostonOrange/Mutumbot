@@ -4,15 +4,17 @@
  * Agent Builder-style dynamic configuration for per-channel customization.
  *
  * Architecture:
- * - Base persona (MUTUMBOT_SYSTEM_PROMPT) stays in code (safety)
- * - Agents provide persona overlays (tone adjustments, extra instructions)
+ * - SAFETY_GUARDRAILS always prepended (hardcoded, cannot be overridden)
+ * - Agents define full system prompts (persona, behavior, instructions)
+ * - Agents define allowed capabilities (what features the bot can use)
  * - Workflows define context policies (how many messages, use summary, etc.)
  * - Threads bind to workflows for per-channel behavior
  *
- * This allows adjusting the bot per channel/DM while keeping core safety rails.
+ * Everything except safety rules is configurable via the database.
  */
 
 import { neon, neonConfig } from '@neondatabase/serverless';
+import { SAFETY_GUARDRAILS, DEFAULT_MUTUMBOT_PERSONA } from '../personality';
 
 neonConfig.fetchConnectionCache = true;
 
@@ -26,16 +28,20 @@ export interface Agent {
   name: string;
   description: string | null;
   /**
-   * Persona text - behavior depends on replaceBasePrompt:
-   * - If replaceBasePrompt=false: added AFTER the base system prompt (overlay)
-   * - If replaceBasePrompt=true: REPLACES the base system prompt entirely
+   * Full system prompt for this agent (persona, behavior, instructions).
+   * SAFETY_GUARDRAILS are always prepended automatically.
    */
-  systemPromptOverlay: string | null;
+  systemPrompt: string | null;
   /**
-   * If true, systemPromptOverlay completely replaces the base persona.
-   * If false (default), it's added as an overlay after the base persona.
+   * Custom instructions added after the system prompt.
+   * Use for channel-specific tweaks without rewriting the whole persona.
    */
-  replaceBasePrompt: boolean;
+  customInstructions: string | null;
+  /**
+   * Capabilities this agent is allowed to use.
+   * Examples: 'image_analysis', 'web_search', 'tribute_tracking'
+   */
+  capabilities: string[];
   /** Model to use (e.g., 'google/gemini-2.5-flash-lite') */
   model: string;
   /** Model parameters */
@@ -84,7 +90,7 @@ export interface ContextPolicy {
 export interface ResolvedConfig {
   agent: Agent;
   workflow: Workflow;
-  /** Final system prompt = base + agent overlay + workflow instructions */
+  /** Final system prompt = SAFETY_GUARDRAILS + agent.systemPrompt + customInstructions */
   systemPrompt: string;
   contextPolicy: ContextPolicy;
 }
@@ -124,8 +130,9 @@ export async function initializeAgentTables(): Promise<void> {
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name VARCHAR(100) NOT NULL,
         description TEXT,
-        system_prompt_overlay TEXT,
-        replace_base_prompt BOOLEAN DEFAULT FALSE,
+        system_prompt TEXT,
+        custom_instructions TEXT,
+        capabilities JSONB DEFAULT '[]',
         model VARCHAR(100) DEFAULT 'google/gemini-2.5-flash-lite',
         params JSONB DEFAULT '{"temperature": 0.7}',
         is_default BOOLEAN DEFAULT FALSE,
@@ -135,15 +142,39 @@ export async function initializeAgentTables(): Promise<void> {
       )
     `;
 
-    // Add replace_base_prompt column if not exists (for existing tables)
+    // Migration: Add new columns if they don't exist (for existing tables)
     await sql`
       DO $$
       BEGIN
+        -- Add system_prompt if not exists
         IF NOT EXISTS (
           SELECT 1 FROM information_schema.columns
-          WHERE table_name = 'agents' AND column_name = 'replace_base_prompt'
+          WHERE table_name = 'agents' AND column_name = 'system_prompt'
         ) THEN
-          ALTER TABLE agents ADD COLUMN replace_base_prompt BOOLEAN DEFAULT FALSE;
+          ALTER TABLE agents ADD COLUMN system_prompt TEXT;
+          -- Migrate data from old column if it exists
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'agents' AND column_name = 'system_prompt_overlay'
+          ) THEN
+            UPDATE agents SET system_prompt = system_prompt_overlay;
+          END IF;
+        END IF;
+
+        -- Add custom_instructions if not exists
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'agents' AND column_name = 'custom_instructions'
+        ) THEN
+          ALTER TABLE agents ADD COLUMN custom_instructions TEXT;
+        END IF;
+
+        -- Add capabilities if not exists
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'agents' AND column_name = 'capabilities'
+        ) THEN
+          ALTER TABLE agents ADD COLUMN capabilities JSONB DEFAULT '[]';
         END IF;
       END $$;
     `;
@@ -205,13 +236,16 @@ async function ensureDefaults(): Promise<void> {
   let defaultAgentId: string;
 
   if (existingAgent.length === 0) {
-    // Create default agent
+    // Create default agent with the tiki persona (stored in DB, not hardcoded)
+    const defaultCapabilities = ['image_analysis', 'tribute_tracking'];
     const result = await sql`
-      INSERT INTO agents (name, description, system_prompt_overlay, model, params, is_default)
+      INSERT INTO agents (name, description, system_prompt, custom_instructions, capabilities, model, params, is_default)
       VALUES (
         'Mutumbot Default',
-        'The standard ancient tiki entity persona',
+        'The ancient tiki entity persona - can be replaced by creating a new default agent',
+        ${DEFAULT_MUTUMBOT_PERSONA},
         NULL,
+        ${JSON.stringify(defaultCapabilities)},
         ${DEFAULT_MODEL},
         ${JSON.stringify(DEFAULT_AGENT_PARAMS)},
         TRUE
@@ -219,7 +253,7 @@ async function ensureDefaults(): Promise<void> {
       RETURNING id
     `;
     defaultAgentId = result[0].id as string;
-    console.log('[Agents] Created default agent:', defaultAgentId);
+    console.log('[Agents] Created default agent with tiki persona:', defaultAgentId);
   } else {
     defaultAgentId = existingAgent[0].id as string;
   }
@@ -255,7 +289,7 @@ export async function getAgents(): Promise<Agent[]> {
   if (!sql) return [];
 
   const result = await sql`
-    SELECT id, name, description, system_prompt_overlay, replace_base_prompt,
+    SELECT id, name, description, system_prompt, custom_instructions, capabilities,
            model, params, is_default, is_active, created_at, updated_at
     FROM agents
     WHERE is_active = TRUE
@@ -272,7 +306,7 @@ export async function getAgent(id: string): Promise<Agent | null> {
   if (!sql) return null;
 
   const result = await sql`
-    SELECT id, name, description, system_prompt_overlay, replace_base_prompt,
+    SELECT id, name, description, system_prompt, custom_instructions, capabilities,
            model, params, is_default, is_active, created_at, updated_at
     FROM agents WHERE id = ${id}::uuid
   `;
@@ -288,7 +322,7 @@ export async function getDefaultAgent(): Promise<Agent | null> {
   if (!sql) return null;
 
   const result = await sql`
-    SELECT id, name, description, system_prompt_overlay, replace_base_prompt,
+    SELECT id, name, description, system_prompt, custom_instructions, capabilities,
            model, params, is_default, is_active, created_at, updated_at
     FROM agents WHERE is_default = TRUE LIMIT 1
   `;
@@ -304,9 +338,12 @@ export async function createAgent(
   name: string,
   options: {
     description?: string;
-    systemPromptOverlay?: string;
-    /** If true, systemPromptOverlay replaces the base persona entirely */
-    replaceBasePrompt?: boolean;
+    /** Full system prompt for the agent's persona and behavior */
+    systemPrompt?: string;
+    /** Additional instructions (added after system prompt) */
+    customInstructions?: string;
+    /** Allowed capabilities: 'image_analysis', 'web_search', 'tribute_tracking', etc. */
+    capabilities?: string[];
     model?: string;
     params?: AgentParams;
   } = {}
@@ -314,16 +351,17 @@ export async function createAgent(
   if (!sql) throw new Error('Database not available');
 
   const result = await sql`
-    INSERT INTO agents (name, description, system_prompt_overlay, replace_base_prompt, model, params)
+    INSERT INTO agents (name, description, system_prompt, custom_instructions, capabilities, model, params)
     VALUES (
       ${name},
       ${options.description || null},
-      ${options.systemPromptOverlay || null},
-      ${options.replaceBasePrompt || false},
+      ${options.systemPrompt || null},
+      ${options.customInstructions || null},
+      ${JSON.stringify(options.capabilities || [])},
       ${options.model || DEFAULT_MODEL},
       ${JSON.stringify(options.params || DEFAULT_AGENT_PARAMS)}
     )
-    RETURNING id, name, description, system_prompt_overlay, replace_base_prompt,
+    RETURNING id, name, description, system_prompt, custom_instructions, capabilities,
               model, params, is_default, is_active, created_at, updated_at
   `;
 
@@ -338,9 +376,9 @@ export async function updateAgent(
   updates: {
     name?: string;
     description?: string;
-    systemPromptOverlay?: string | null;
-    /** If true, systemPromptOverlay replaces the base persona entirely */
-    replaceBasePrompt?: boolean;
+    systemPrompt?: string | null;
+    customInstructions?: string | null;
+    capabilities?: string[];
     model?: string;
     params?: AgentParams;
     isActive?: boolean;
@@ -352,11 +390,18 @@ export async function updateAgent(
     UPDATE agents SET
       name = COALESCE(${updates.name ?? null}, name),
       description = COALESCE(${updates.description ?? null}, description),
-      system_prompt_overlay = CASE
-        WHEN ${updates.systemPromptOverlay !== undefined} THEN ${updates.systemPromptOverlay ?? null}
-        ELSE system_prompt_overlay
+      system_prompt = CASE
+        WHEN ${updates.systemPrompt !== undefined} THEN ${updates.systemPrompt ?? null}
+        ELSE system_prompt
       END,
-      replace_base_prompt = COALESCE(${updates.replaceBasePrompt ?? null}, replace_base_prompt),
+      custom_instructions = CASE
+        WHEN ${updates.customInstructions !== undefined} THEN ${updates.customInstructions ?? null}
+        ELSE custom_instructions
+      END,
+      capabilities = CASE
+        WHEN ${updates.capabilities !== undefined} THEN ${JSON.stringify(updates.capabilities)}::jsonb
+        ELSE capabilities
+      END,
       model = COALESCE(${updates.model ?? null}, model),
       params = CASE
         WHEN ${updates.params !== undefined} THEN ${JSON.stringify(updates.params)}::jsonb
@@ -365,7 +410,7 @@ export async function updateAgent(
       is_active = COALESCE(${updates.isActive ?? null}, is_active),
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ${id}::uuid
-    RETURNING id, name, description, system_prompt_overlay, replace_base_prompt,
+    RETURNING id, name, description, system_prompt, custom_instructions, capabilities,
               model, params, is_default, is_active, created_at, updated_at
   `;
 
@@ -540,12 +585,38 @@ export async function getThreadWorkflow(threadId: string): Promise<Workflow | nu
 // ============ CONFIG RESOLUTION ============
 
 /**
+ * Compose the final system prompt from safety guardrails + agent config
+ */
+function composeSystemPrompt(agent: Agent, workflow: Workflow): string {
+  const parts: string[] = [];
+
+  // 1. SAFETY_GUARDRAILS - always first, cannot be overridden
+  parts.push(SAFETY_GUARDRAILS);
+
+  // 2. Agent's system prompt (persona, behavior)
+  if (agent.systemPrompt) {
+    parts.push(agent.systemPrompt);
+  }
+
+  // 3. Agent's custom instructions
+  if (agent.customInstructions) {
+    parts.push(`--- CUSTOM INSTRUCTIONS ---\n${agent.customInstructions}`);
+  }
+
+  // 4. Workflow-specific instructions (channel-level tweaks)
+  if (workflow.contextPolicy.customInstructions) {
+    parts.push(`--- CHANNEL INSTRUCTIONS ---\n${workflow.contextPolicy.customInstructions}`);
+  }
+
+  return parts.join('\n\n');
+}
+
+/**
  * Resolve full configuration for a thread
  * Returns the agent, workflow, and composed system prompt
  */
 export async function resolveThreadConfig(
-  threadId: string,
-  baseSystemPrompt: string
+  threadId: string
 ): Promise<ResolvedConfig | null> {
   const workflow = await getThreadWorkflow(threadId);
   if (!workflow) return null;
@@ -553,43 +624,24 @@ export async function resolveThreadConfig(
   const agent = await getAgent(workflow.agentId);
   if (!agent) return null;
 
-  // Compose final system prompt based on agent's replaceBasePrompt setting
-  let systemPrompt: string;
-
-  if (agent.replaceBasePrompt && agent.systemPromptOverlay) {
-    // Full replacement - agent's prompt IS the system prompt
-    systemPrompt = agent.systemPromptOverlay;
-  } else {
-    // Overlay mode (default) - base + agent overlay
-    systemPrompt = baseSystemPrompt;
-    if (agent.systemPromptOverlay) {
-      systemPrompt += `\n\n--- PERSONA ADJUSTMENTS ---\n${agent.systemPromptOverlay}`;
-    }
-  }
-
-  // Add workflow instructions (always appended)
-  if (workflow.contextPolicy.customInstructions) {
-    systemPrompt += `\n\n--- WORKFLOW INSTRUCTIONS ---\n${workflow.contextPolicy.customInstructions}`;
-  }
-
   return {
     agent,
     workflow,
-    systemPrompt,
+    systemPrompt: composeSystemPrompt(agent, workflow),
     contextPolicy: workflow.contextPolicy,
   };
 }
 
 /**
  * Get config with fallback to defaults
+ * No longer requires a base system prompt - everything comes from DB
  */
 export async function resolveConfigWithDefaults(
-  threadId: string | null,
-  baseSystemPrompt: string
+  threadId: string | null
 ): Promise<ResolvedConfig> {
   // Try thread-specific config first
   if (threadId) {
-    const config = await resolveThreadConfig(threadId, baseSystemPrompt);
+    const config = await resolveThreadConfig(threadId);
     if (config) return config;
   }
 
@@ -597,61 +649,45 @@ export async function resolveConfigWithDefaults(
   const agent = await getDefaultAgent();
   const workflow = await getDefaultWorkflow();
 
-  // If no defaults exist, return hardcoded fallback
+  // If no defaults exist, return hardcoded fallback (safety only)
   if (!agent || !workflow) {
+    const fallbackAgent: Agent = {
+      id: 'fallback',
+      name: 'Fallback Agent',
+      description: null,
+      systemPrompt: null,
+      customInstructions: null,
+      capabilities: [],
+      model: DEFAULT_MODEL,
+      params: DEFAULT_AGENT_PARAMS,
+      isDefault: true,
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const fallbackWorkflow: Workflow = {
+      id: 'fallback',
+      name: 'Fallback Workflow',
+      description: null,
+      agentId: 'fallback',
+      contextPolicy: DEFAULT_CONTEXT_POLICY,
+      isDefault: true,
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
     return {
-      agent: {
-        id: 'fallback',
-        name: 'Fallback Agent',
-        description: null,
-        systemPromptOverlay: null,
-        replaceBasePrompt: false,
-        model: DEFAULT_MODEL,
-        params: DEFAULT_AGENT_PARAMS,
-        isDefault: true,
-        isActive: true,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-      workflow: {
-        id: 'fallback',
-        name: 'Fallback Workflow',
-        description: null,
-        agentId: 'fallback',
-        contextPolicy: DEFAULT_CONTEXT_POLICY,
-        isDefault: true,
-        isActive: true,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-      systemPrompt: baseSystemPrompt,
+      agent: fallbackAgent,
+      workflow: fallbackWorkflow,
+      systemPrompt: SAFETY_GUARDRAILS, // Only safety when no agent configured
       contextPolicy: DEFAULT_CONTEXT_POLICY,
     };
-  }
-
-  // Compose system prompt based on agent's replaceBasePrompt setting
-  let systemPrompt: string;
-
-  if (agent.replaceBasePrompt && agent.systemPromptOverlay) {
-    // Full replacement - agent's prompt IS the system prompt
-    systemPrompt = agent.systemPromptOverlay;
-  } else {
-    // Overlay mode (default) - base + agent overlay
-    systemPrompt = baseSystemPrompt;
-    if (agent.systemPromptOverlay) {
-      systemPrompt += `\n\n--- PERSONA ADJUSTMENTS ---\n${agent.systemPromptOverlay}`;
-    }
-  }
-
-  // Add workflow instructions (always appended)
-  if (workflow.contextPolicy.customInstructions) {
-    systemPrompt += `\n\n--- WORKFLOW INSTRUCTIONS ---\n${workflow.contextPolicy.customInstructions}`;
   }
 
   return {
     agent,
     workflow,
-    systemPrompt,
+    systemPrompt: composeSystemPrompt(agent, workflow),
     contextPolicy: workflow.contextPolicy,
   };
 }
@@ -663,8 +699,9 @@ function rowToAgent(row: Record<string, unknown>): Agent {
     id: row.id as string,
     name: row.name as string,
     description: row.description as string | null,
-    systemPromptOverlay: row.system_prompt_overlay as string | null,
-    replaceBasePrompt: (row.replace_base_prompt as boolean) || false,
+    systemPrompt: row.system_prompt as string | null,
+    customInstructions: row.custom_instructions as string | null,
+    capabilities: (row.capabilities as string[]) || [],
     model: row.model as string,
     params: row.params as AgentParams,
     isDefault: row.is_default as boolean,

@@ -7,7 +7,6 @@
 
 import OpenAI from 'openai';
 import {
-  MUTUMBOT_SYSTEM_PROMPT,
   MUTUMBOT_AWAKENING,
   ISEE_EMOJI,
   processIseeMarkers,
@@ -34,9 +33,8 @@ import {
 } from './services/agents';
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-// OpenRouter client for Gemini 2.5 Flash Lite
+// OpenRouter client - the ONLY AI provider (no fallbacks)
 const openrouter = OPENROUTER_API_KEY
   ? new OpenAI({
       baseURL: 'https://openrouter.ai/api/v1',
@@ -164,45 +162,9 @@ async function analyzeImageWithOpenRouter(
 /**
  * Analyze image using OpenAI (fallback)
  */
-async function analyzeImageWithOpenAI(
-  base64: string,
-  contentType: string,
-  prompt: string
-): Promise<ImageAnalysis | null> {
-  if (!OPENAI_API_KEY) {
-    return null;
-  }
-
-  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
-  const response = await openai.responses.create({
-    model: 'gpt-5-nano-2025-08-07',
-    input: [
-      {
-        role: 'user',
-        content: [
-          { type: 'input_text', text: prompt },
-          {
-            type: 'input_image',
-            image_url: `data:${contentType};base64,${base64}`,
-            detail: 'auto',
-          },
-        ],
-      },
-    ],
-  });
-
-  const responseText = response.output_text?.trim();
-  if (!responseText) {
-    return null;
-  }
-
-  return parseImageAnalysisResponse(responseText);
-}
-
 /**
  * Analyze an image and generate a full AI response for the tribute
- * Uses OpenRouter (Gemini 2.5 Flash Lite) as primary, falls back to OpenAI if it fails
+ * Uses OpenRouter only (no fallbacks)
  */
 export async function analyzeImage(
   imageUrl: string,
@@ -210,13 +172,10 @@ export async function analyzeImage(
   isFriday?: boolean,
   isDM?: boolean
 ): Promise<ImageAnalysis | null> {
-  // Need at least one AI provider
-  if (!OPENROUTER_API_KEY && !OPENAI_API_KEY) {
-    console.error('No AI API keys configured for image analysis. OPENROUTER_API_KEY:', !!OPENROUTER_API_KEY, 'OPENAI_API_KEY:', !!OPENAI_API_KEY);
+  if (!OPENROUTER_API_KEY) {
+    console.error('OPENROUTER_API_KEY not configured for image analysis');
     return null;
   }
-
-  console.log('analyzeImage called. OpenRouter available:', !!OPENROUTER_API_KEY, 'OpenAI available:', !!OPENAI_API_KEY);
 
   try {
     // Fetch the image from Discord CDN
@@ -233,37 +192,20 @@ export async function analyzeImage(
 
     console.log('Image fetched successfully. Size:', base64.length, 'Content-Type:', contentType);
 
-    // Try OpenRouter first (primary - Gemini 2.5 Flash Lite)
-    if (OPENROUTER_API_KEY) {
-      try {
-        console.log('Attempting OpenRouter (Gemini 2.5 Flash Lite) image analysis...');
-        const openrouterResult = await analyzeImageWithOpenRouter(base64, contentType, prompt);
-        if (openrouterResult) {
-          console.log('Image analyzed with OpenRouter. Category:', openrouterResult.category, 'Score:', openrouterResult.score);
-          return openrouterResult;
-        }
-        console.error('OpenRouter returned null result');
-      } catch (error) {
-        console.error('OpenRouter analysis failed, trying OpenAI fallback. Error:', (error as Error).message || error);
+    // Use OpenRouter for image analysis
+    try {
+      console.log('Analyzing image with OpenRouter...');
+      const result = await analyzeImageWithOpenRouter(base64, contentType, prompt);
+      if (result) {
+        console.log('Image analyzed. Category:', result.category, 'Score:', result.score);
+        return result;
       }
+      console.error('OpenRouter returned null result');
+    } catch (error) {
+      console.error('OpenRouter analysis failed:', (error as Error).message || error);
     }
 
-    // Fallback to OpenAI
-    if (OPENAI_API_KEY) {
-      try {
-        console.log('Attempting OpenAI image analysis (fallback)...');
-        const openaiResult = await analyzeImageWithOpenAI(base64, contentType, prompt);
-        if (openaiResult) {
-          console.log('Image analyzed with OpenAI. Category:', openaiResult.category, 'Score:', openaiResult.score);
-          return openaiResult;
-        }
-        console.error('OpenAI returned null result');
-      } catch (error) {
-        console.error('OpenAI fallback also failed. Error:', (error as Error).message || error);
-      }
-    }
-
-    console.error('All AI providers failed for image analysis');
+    console.error('Image analysis failed');
     return null;
   } catch (error) {
     console.error('Image analysis error:', (error as Error).message || error);
@@ -273,8 +215,8 @@ export async function analyzeImage(
 
 /**
  * Chat with OpenRouter with conversation history
- * Supports both in-memory context and database transcript context
- * Now uses agent config for model selection and system prompt
+ * Uses agent config for model selection and system prompt
+ * All prompts come from database (except hardcoded safety guardrails)
  */
 async function chatWithOpenRouter(
   question: string,
@@ -283,12 +225,12 @@ async function chatWithOpenRouter(
   transcript?: string,
   config?: ResolvedConfig
 ): Promise<string | null> {
-  if (!openrouter) {
+  if (!openrouter || !config) {
     return null;
   }
 
-  // Use configured system prompt or fall back to base
-  let systemPrompt = config?.systemPrompt || MUTUMBOT_SYSTEM_PROMPT;
+  // System prompt comes entirely from config (safety + agent persona)
+  let systemPrompt = config.systemPrompt;
 
   // Add database context (tribute statistics, leaderboards)
   if (aiContext) {
@@ -336,65 +278,6 @@ async function chatWithOpenRouter(
 }
 
 /**
- * Chat with OpenAI (with conversation history) - fallback
- * Now supports both in-memory context and database transcript context
- * Uses agent config for system prompt customization
- */
-async function chatWithOpenAI(
-  question: string,
-  channelId?: string,
-  aiContext?: string,
-  transcript?: string,
-  config?: ResolvedConfig
-): Promise<string | null> {
-  if (!OPENAI_API_KEY) {
-    return null;
-  }
-
-  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
-  // Use configured system prompt or fall back to base
-  let systemPrompt = config?.systemPrompt || MUTUMBOT_SYSTEM_PROMPT;
-
-  // Add database context (tribute statistics, leaderboards)
-  if (aiContext) {
-    systemPrompt += `\n\n--- CURRENT DATABASE CONTEXT ---\n${aiContext}`;
-  }
-
-  // Add channel transcript (recent conversation history from DB)
-  if (transcript) {
-    systemPrompt += `\n\n--- RECENT CHANNEL CONVERSATION ---\nThis is the recent conversation in this channel. Use this to understand context:\n${transcript}`;
-  }
-
-  // Build input array for OpenAI responses API
-  const input: Array<{ role: string; content: string }> = [
-    { role: 'developer', content: systemPrompt },
-    { role: 'assistant', content: MUTUMBOT_AWAKENING },
-  ];
-
-  // If we have a transcript, we don't need the in-memory context
-  // Otherwise, fall back to in-memory for backward compatibility
-  if (!transcript && channelId) {
-    const contextHistory = formatContextForAI(channelId);
-    for (const entry of contextHistory) {
-      const role = entry.role === 'user' ? 'user' : 'assistant';
-      const text = entry.parts.map((p: { text: string }) => p.text).join('');
-      input.push({ role, content: text });
-    }
-  }
-
-  // Add the current question
-  input.push({ role: 'user', content: question });
-
-  const response = await openai.responses.create({
-    model: 'gpt-5-nano-2025-08-07',
-    input: input as any,
-  });
-
-  return response.output_text || null;
-}
-
-/**
  * Handle the /ask command using AI with Mutumbot personality
  * Uses OpenRouter (Gemini 2.5 Flash Lite) as primary, falls back to OpenAI if it fails
  *
@@ -416,9 +299,9 @@ export async function handleDrinkQuestion(
   messageId?: string,
   guildId?: string | null
 ): Promise<{ content: string; runId?: string }> {
-  if (!OPENROUTER_API_KEY && !OPENAI_API_KEY) {
+  if (!OPENROUTER_API_KEY) {
     return {
-      content: `${ISEE_EMOJI} The spirits are SILENT. The ancient connection to the AI realm has not been established. Summon the bot administrator to configure the sacred API key.`,
+      content: `${ISEE_EMOJI} The spirits are SILENT. The ancient connection to the AI realm has not been established. Summon the bot administrator to configure the OPENROUTER_API_KEY.`,
     };
   }
 
@@ -462,26 +345,28 @@ export async function handleDrinkQuestion(
     }
   }
 
-  // Resolve agent/workflow config for this thread
+  // Resolve agent/workflow config for this thread (persona comes from DB)
   const threadId = channelId ? generateThreadId(channelId, guildId ?? null) : null;
   let config: ResolvedConfig | undefined;
   try {
-    config = await resolveConfigWithDefaults(threadId, MUTUMBOT_SYSTEM_PROMPT);
+    config = await resolveConfigWithDefaults(threadId);
     if (config.agent.name !== 'Fallback Agent') {
       console.log(`[Agent] Using agent: ${config.agent.name}, model: ${config.agent.model}`);
     }
   } catch (error) {
     console.error('[Agent] Failed to resolve config:', error);
-    // Continue with default behavior
+    return {
+      content: `${ISEE_EMOJI} The spirits are CONFUSED. Failed to resolve agent configuration.`,
+    };
   }
 
   // Start run logging
   let runId: string | undefined;
-  if (channelId && threadId) {
+  if (channelId && threadId && config) {
     try {
       runId = await startRun(threadId, {
-        provider: OPENROUTER_API_KEY ? 'openrouter' : 'openai',
-        model: config?.agent.model || DEFAULT_MODEL,
+        provider: 'openrouter',
+        model: config.agent.model || DEFAULT_MODEL,
         selectedItemIds: contextPack?.selectedItemIds,
         tokenEstimate: contextPack?.tokenEstimate,
       });
@@ -492,32 +377,15 @@ export async function handleDrinkQuestion(
   }
 
   let response: string | null = null;
-  let providerUsed: string | null = null;
 
-  // Try OpenRouter first
-  if (OPENROUTER_API_KEY) {
-    try {
-      response = await chatWithOpenRouter(question, channelId, aiContext, transcript, config);
-      if (response) {
-        providerUsed = 'openrouter';
-        console.log(`Chat handled by OpenRouter (${config?.agent.model || DEFAULT_MODEL})`);
-      }
-    } catch (error) {
-      console.error('OpenRouter chat failed, trying OpenAI fallback:', error);
+  // Use OpenRouter (the only AI provider)
+  try {
+    response = await chatWithOpenRouter(question, channelId, aiContext, transcript, config);
+    if (response) {
+      console.log(`Chat handled by OpenRouter (${config.agent.model || DEFAULT_MODEL})`);
     }
-  }
-
-  // Fallback to OpenAI
-  if (!response && OPENAI_API_KEY) {
-    try {
-      response = await chatWithOpenAI(question, channelId, aiContext, transcript, config);
-      if (response) {
-        providerUsed = 'openai';
-        console.log('Chat handled by OpenAI (fallback)');
-      }
-    } catch (error) {
-      console.error('OpenAI chat fallback also failed:', error);
-    }
+  } catch (error) {
+    console.error('OpenRouter chat failed:', error);
   }
 
   if (!response) {
@@ -555,7 +423,7 @@ export async function handleDrinkQuestion(
   if (runId) {
     try {
       await completeRun(runId, {
-        provider: providerUsed,
+        provider: 'openrouter',
         responseLength: response.length,
       });
     } catch (error) {
@@ -621,31 +489,13 @@ async function generateWithOpenRouter(prompt: string): Promise<string | null> {
 }
 
 /**
- * Generate simple text with OpenAI (fallback)
- */
-async function generateWithOpenAI(prompt: string): Promise<string | null> {
-  if (!OPENAI_API_KEY) {
-    return null;
-  }
-
-  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
-  const response = await openai.responses.create({
-    model: 'gpt-5-nano-2025-08-07',
-    input: prompt,
-  });
-
-  return response.output_text || null;
-}
-
-/**
  * Handle the legacy /drink random command - random tiki/drink fact
- * Uses OpenRouter (Gemini 2.5 Flash Lite) as primary, falls back to OpenAI if it fails
+ * Uses OpenRouter only (no fallbacks)
  */
 export async function handleRandomDrinkFact(): Promise<{ content: string }> {
-  if (!OPENROUTER_API_KEY && !OPENAI_API_KEY) {
+  if (!OPENROUTER_API_KEY) {
     return {
-      content: `${ISEE_EMOJI} The spirits are SILENT. The sacred API connection is not configured.`,
+      content: `${ISEE_EMOJI} The spirits are SILENT. OPENROUTER_API_KEY is not configured.`,
     };
   }
 
@@ -665,28 +515,13 @@ export async function handleRandomDrinkFact(): Promise<{ content: string }> {
 
   let response: string | null = null;
 
-  // Try OpenRouter first (Gemini 2.5 Flash Lite)
-  if (OPENROUTER_API_KEY) {
-    try {
-      response = await generateWithOpenRouter(prompt);
-      if (response) {
-        console.log('Random fact generated by OpenRouter (Gemini 2.5 Flash Lite)');
-      }
-    } catch (error) {
-      console.error('OpenRouter generation failed, trying OpenAI fallback:', error);
+  try {
+    response = await generateWithOpenRouter(prompt);
+    if (response) {
+      console.log('Random fact generated by OpenRouter');
     }
-  }
-
-  // Fallback to OpenAI
-  if (!response && OPENAI_API_KEY) {
-    try {
-      response = await generateWithOpenAI(prompt);
-      if (response) {
-        console.log('Random fact generated by OpenAI (fallback)');
-      }
-    } catch (error) {
-      console.error('OpenAI generation fallback also failed:', error);
-    }
+  } catch (error) {
+    console.error('OpenRouter generation failed:', error);
   }
 
   if (!response) {
