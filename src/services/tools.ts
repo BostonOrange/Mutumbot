@@ -394,6 +394,14 @@ async function executeCreateScheduledEvent(
   }
 
   try {
+    console.log('[Tools] Creating scheduled event:', {
+      name: args.name,
+      threadId: targetThreadId,
+      cron: args.cron_expression,
+      type: args.event_type,
+      timezone: args.timezone || 'Europe/Stockholm',
+    });
+
     const event = await createScheduledEvent(
       args.name,
       targetThreadId,
@@ -404,6 +412,8 @@ async function executeCreateScheduledEvent(
         timezone: args.timezone || 'Europe/Stockholm',
       }
     );
+
+    console.log('[Tools] Event created successfully:', event.id);
 
     const targetInfo = args.target_channel_id
       ? ` for channel ${args.target_channel_id}`
@@ -422,6 +432,7 @@ async function executeCreateScheduledEvent(
       },
     });
   } catch (error) {
+    console.error('[Tools] Failed to create event:', error);
     return JSON.stringify({
       error: `Failed to create event: ${(error as Error).message}`,
     });
