@@ -66,7 +66,7 @@ export const SCHEDULING_TOOLS: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'create_scheduled_event',
-      description: 'Create a new scheduled event (cron job) for this channel. Use this when users ask to set up reminders, scheduled messages, or recurring events.',
+      description: 'Create a new scheduled event (cron job) for a channel. Use this when users ask to set up reminders, scheduled messages, or recurring events. If no target channel specified, uses the current channel.',
       parameters: {
         type: 'object',
         properties: {
@@ -90,6 +90,14 @@ export const SCHEDULING_TOOLS: ToolDefinition[] = [
           timezone: {
             type: 'string',
             description: 'Timezone for the schedule (default: Europe/Stockholm). Examples: UTC, America/New_York, Europe/London',
+          },
+          target_channel_id: {
+            type: 'string',
+            description: 'Discord channel ID to target (if different from current channel). Use when user specifies a channel like "#tiki-lounge" or provides a channel ID.',
+          },
+          target_guild_id: {
+            type: 'string',
+            description: 'Discord guild/server ID for the target channel. Required if target_channel_id is provided and we are in a DM.',
           },
         },
         required: ['name', 'cron_expression', 'event_type'],
@@ -240,6 +248,8 @@ async function executeCreateScheduledEvent(
     event_type: string;
     message?: string;
     timezone?: string;
+    target_channel_id?: string;
+    target_guild_id?: string;
   },
   threadId: string,
   capabilities: string[]
@@ -249,6 +259,28 @@ async function executeCreateScheduledEvent(
     return JSON.stringify({
       error: 'This agent does not have permission to create scheduled events',
     });
+  }
+
+  // Determine target threadId
+  let targetThreadId = threadId;
+  if (args.target_channel_id) {
+    // User specified a target channel
+    if (args.target_guild_id) {
+      // Guild channel
+      targetThreadId = `discord:${args.target_guild_id}:${args.target_channel_id}`;
+    } else {
+      // Try to extract guild from current threadId if it's a guild channel
+      const parts = threadId.split(':');
+      if (parts[0] === 'discord' && parts[1] !== 'dm' && parts[1]) {
+        // Current thread is in a guild, use that guild
+        targetThreadId = `discord:${parts[1]}:${args.target_channel_id}`;
+      } else {
+        // We're in a DM and no guild specified - need guild ID
+        return JSON.stringify({
+          error: 'target_guild_id is required when specifying a channel from a DM. Please provide the server/guild ID.',
+        });
+      }
+    }
   }
 
   // Validate event type
@@ -270,7 +302,7 @@ async function executeCreateScheduledEvent(
   try {
     const event = await createScheduledEvent(
       args.name,
-      threadId,
+      targetThreadId,
       args.cron_expression,
       args.event_type as EventType,
       {
@@ -279,15 +311,20 @@ async function executeCreateScheduledEvent(
       }
     );
 
+    const targetInfo = args.target_channel_id
+      ? ` for channel ${args.target_channel_id}`
+      : '';
+
     return JSON.stringify({
       success: true,
-      message: `Created scheduled event "${event.name}"`,
+      message: `Created scheduled event "${event.name}"${targetInfo}`,
       event: {
         id: event.id,
         name: event.name,
         cron: event.cronExpression,
         type: event.eventType,
         timezone: event.timezone,
+        targetChannel: targetThreadId,
       },
     });
   } catch (error) {
