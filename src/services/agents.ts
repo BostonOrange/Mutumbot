@@ -53,9 +53,103 @@ export interface Agent {
 }
 
 export interface AgentParams {
+  /** Creativity/randomness (0-2, default 0.7) */
   temperature?: number;
+  /** Nucleus sampling threshold (0-1, default 0.9) */
   topP?: number;
+  /** Maximum response tokens */
   maxTokens?: number;
+  /** Penalize repeated tokens (-2 to 2) */
+  frequencyPenalty?: number;
+  /** Penalize tokens already in context (-2 to 2) */
+  presencePenalty?: number;
+  /** Stop sequences - response ends when these are generated */
+  stop?: string[];
+  /** Allow extensibility */
+  [key: string]: unknown;
+}
+
+/**
+ * Available capabilities that can be assigned to agents.
+ * These control what features the agent is allowed to use.
+ */
+export const AVAILABLE_CAPABILITIES = {
+  // Core capabilities
+  IMAGE_ANALYSIS: 'image_analysis',       // Analyze images (tributes, etc.)
+  TRIBUTE_TRACKING: 'tribute_tracking',   // Track and score tributes
+  WEB_SEARCH: 'web_search',               // Search the web (future)
+
+  // Content generation
+  SCHEDULED_MESSAGES: 'scheduled_messages', // Can be triggered by cron jobs
+  RANDOM_FACTS: 'random_facts',           // Generate random facts
+
+  // Moderation
+  CONTENT_MODERATION: 'content_moderation', // Flag inappropriate content
+
+  // Integration
+  EXTERNAL_API: 'external_api',           // Call external APIs (future)
+} as const;
+
+export type Capability = typeof AVAILABLE_CAPABILITIES[keyof typeof AVAILABLE_CAPABILITIES];
+
+// ============ SCHEDULED EVENTS ============
+
+/**
+ * Event types that can be scheduled
+ */
+export const EVENT_TYPES = {
+  TRIBUTE_REMINDER: 'tribute_reminder',     // Remind about Friday tributes
+  CUSTOM_MESSAGE: 'custom_message',         // Send a custom message using agent persona
+  STATUS_REPORT: 'status_report',           // Post stats/leaderboard
+  AI_PROMPT: 'ai_prompt',                   // Ask AI to generate and post something
+  CHANNEL_SUMMARY: 'channel_summary',       // Summarize recent channel activity
+} as const;
+
+export type EventType = typeof EVENT_TYPES[keyof typeof EVENT_TYPES];
+
+/**
+ * Scheduled event - cron job tied to a specific channel
+ */
+export interface ScheduledEvent {
+  id: string;
+  name: string;
+  description: string | null;
+  /** Target thread/channel (discord:guild:channel format) */
+  threadId: string;
+  /** Cron expression (e.g., "0 17 * * 5" for Friday 5pm) */
+  cronExpression: string;
+  /** Type of event to trigger */
+  eventType: EventType;
+  /** Event-specific payload */
+  payload: ScheduledEventPayload;
+  /** Whether this event is active */
+  isActive: boolean;
+  /** Timezone for cron (default: UTC) */
+  timezone: string;
+  /** Last successful run */
+  lastRunAt: Date | null;
+  /** Last run status */
+  lastRunStatus: 'success' | 'failed' | null;
+  /** Error message from last failure */
+  lastError: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Payload types for different event types
+ */
+export interface ScheduledEventPayload {
+  /** For CUSTOM_MESSAGE: the message template */
+  message?: string;
+  /** For AI_PROMPT: the prompt to send to AI */
+  prompt?: string;
+  /** For STATUS_REPORT: what stats to include */
+  includeLeaderboard?: boolean;
+  includeTributeCount?: boolean;
+  /** Whether to mention @everyone or a role */
+  mentionRole?: string;
+  /** Any additional data */
   [key: string]: unknown;
 }
 
@@ -211,6 +305,30 @@ export async function initializeAgentTables(): Promise<void> {
     await sql`CREATE INDEX IF NOT EXISTS idx_agents_default ON agents(is_default) WHERE is_default = TRUE`;
     await sql`CREATE INDEX IF NOT EXISTS idx_workflows_default ON workflows(is_default) WHERE is_default = TRUE`;
     await sql`CREATE INDEX IF NOT EXISTS idx_workflows_agent ON workflows(agent_id)`;
+
+    // Create scheduled_events table for channel-specific cron jobs
+    await sql`
+      CREATE TABLE IF NOT EXISTS scheduled_events (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(100) NOT NULL,
+        description TEXT,
+        thread_id VARCHAR(200) NOT NULL,
+        cron_expression VARCHAR(100) NOT NULL,
+        event_type VARCHAR(50) NOT NULL,
+        payload JSONB DEFAULT '{}',
+        timezone VARCHAR(50) DEFAULT 'UTC',
+        is_active BOOLEAN DEFAULT TRUE,
+        last_run_at TIMESTAMP WITH TIME ZONE,
+        last_run_status VARCHAR(20),
+        last_error TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `;
+
+    // Create indexes for scheduled_events
+    await sql`CREATE INDEX IF NOT EXISTS idx_scheduled_events_active ON scheduled_events(is_active) WHERE is_active = TRUE`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_scheduled_events_thread ON scheduled_events(thread_id)`;
 
     console.log('[Agents] Tables initialized successfully');
 
@@ -723,6 +841,179 @@ function rowToWorkflow(row: Record<string, unknown>): Workflow {
     createdAt: new Date(row.created_at as string),
     updatedAt: new Date(row.updated_at as string),
   };
+}
+
+function rowToScheduledEvent(row: Record<string, unknown>): ScheduledEvent {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    description: row.description as string | null,
+    threadId: row.thread_id as string,
+    cronExpression: row.cron_expression as string,
+    eventType: row.event_type as EventType,
+    payload: (row.payload as ScheduledEventPayload) || {},
+    timezone: (row.timezone as string) || 'UTC',
+    isActive: row.is_active as boolean,
+    lastRunAt: row.last_run_at ? new Date(row.last_run_at as string) : null,
+    lastRunStatus: row.last_run_status as 'success' | 'failed' | null,
+    lastError: row.last_error as string | null,
+    createdAt: new Date(row.created_at as string),
+    updatedAt: new Date(row.updated_at as string),
+  };
+}
+
+// ============ SCHEDULED EVENTS OPERATIONS ============
+
+/**
+ * Get all scheduled events
+ */
+export async function getScheduledEvents(options?: {
+  activeOnly?: boolean;
+  threadId?: string;
+}): Promise<ScheduledEvent[]> {
+  if (!sql) return [];
+
+  let result;
+  if (options?.threadId) {
+    result = await sql`
+      SELECT * FROM scheduled_events
+      WHERE thread_id = ${options.threadId}
+      ${options?.activeOnly ? sql`AND is_active = TRUE` : sql``}
+      ORDER BY name ASC
+    `;
+  } else if (options?.activeOnly) {
+    result = await sql`
+      SELECT * FROM scheduled_events
+      WHERE is_active = TRUE
+      ORDER BY name ASC
+    `;
+  } else {
+    result = await sql`
+      SELECT * FROM scheduled_events
+      ORDER BY name ASC
+    `;
+  }
+
+  return result.map(rowToScheduledEvent);
+}
+
+/**
+ * Get a scheduled event by ID
+ */
+export async function getScheduledEvent(id: string): Promise<ScheduledEvent | null> {
+  if (!sql) return null;
+
+  const result = await sql`
+    SELECT * FROM scheduled_events WHERE id = ${id}::uuid
+  `;
+
+  if (result.length === 0) return null;
+  return rowToScheduledEvent(result[0]);
+}
+
+/**
+ * Create a new scheduled event
+ */
+export async function createScheduledEvent(
+  name: string,
+  threadId: string,
+  cronExpression: string,
+  eventType: EventType,
+  options: {
+    description?: string;
+    payload?: ScheduledEventPayload;
+    timezone?: string;
+  } = {}
+): Promise<ScheduledEvent> {
+  if (!sql) throw new Error('Database not available');
+
+  const result = await sql`
+    INSERT INTO scheduled_events (name, description, thread_id, cron_expression, event_type, payload, timezone)
+    VALUES (
+      ${name},
+      ${options.description || null},
+      ${threadId},
+      ${cronExpression},
+      ${eventType},
+      ${JSON.stringify(options.payload || {})},
+      ${options.timezone || 'UTC'}
+    )
+    RETURNING *
+  `;
+
+  return rowToScheduledEvent(result[0]);
+}
+
+/**
+ * Update a scheduled event
+ */
+export async function updateScheduledEvent(
+  id: string,
+  updates: {
+    name?: string;
+    description?: string | null;
+    cronExpression?: string;
+    eventType?: EventType;
+    payload?: ScheduledEventPayload;
+    timezone?: string;
+    isActive?: boolean;
+  }
+): Promise<ScheduledEvent | null> {
+  if (!sql) return null;
+
+  const result = await sql`
+    UPDATE scheduled_events SET
+      name = COALESCE(${updates.name ?? null}, name),
+      description = COALESCE(${updates.description ?? null}, description),
+      cron_expression = COALESCE(${updates.cronExpression ?? null}, cron_expression),
+      event_type = COALESCE(${updates.eventType ?? null}, event_type),
+      payload = CASE
+        WHEN ${updates.payload !== undefined} THEN ${JSON.stringify(updates.payload)}::jsonb
+        ELSE payload
+      END,
+      timezone = COALESCE(${updates.timezone ?? null}, timezone),
+      is_active = COALESCE(${updates.isActive ?? null}, is_active),
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ${id}::uuid
+    RETURNING *
+  `;
+
+  if (result.length === 0) return null;
+  return rowToScheduledEvent(result[0]);
+}
+
+/**
+ * Delete a scheduled event
+ */
+export async function deleteScheduledEvent(id: string): Promise<boolean> {
+  if (!sql) return false;
+
+  const result = await sql`
+    DELETE FROM scheduled_events WHERE id = ${id}::uuid
+    RETURNING id
+  `;
+
+  return result.length > 0;
+}
+
+/**
+ * Record run result for a scheduled event
+ */
+export async function recordEventRun(
+  id: string,
+  status: 'success' | 'failed',
+  error?: string
+): Promise<void> {
+  if (!sql) return;
+
+  await sql`
+    UPDATE scheduled_events SET
+      last_run_at = CURRENT_TIMESTAMP,
+      last_run_status = ${status},
+      last_error = ${error || null},
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ${id}::uuid
+  `;
 }
 
 // ============ EXPORTS FOR EASY MANAGEMENT ============
