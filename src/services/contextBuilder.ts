@@ -9,9 +9,22 @@
  * - Fills remaining slots by recency
  * - Normalizes mentions, links, and attachments
  * - Enforces token/length budgets
+ *
+ * Now also supports ChatKit-style context building with:
+ * - Thread summary at the top for continuity
+ * - thread_items as first-class transcript source
+ * - Deterministic, inspectable context packs with item IDs
  */
 
 import { neon, neonConfig } from '@neondatabase/serverless';
+import {
+  getThread,
+  getThreadItems,
+  generateThreadId,
+  ThreadItem,
+  Thread,
+} from './threads';
+import { formatSummaryForContext, estimateContextSize } from './summarizer';
 
 neonConfig.fetchConnectionCache = true;
 
@@ -42,6 +55,11 @@ export interface ContextPack {
   triggerMessage: ContextMessage | null;
   channelId: string;
   messageCount: number;
+  // ChatKit enhancements
+  threadId?: string;
+  summary?: string;
+  selectedItemIds?: string[];
+  tokenEstimate?: number;
 }
 
 // ============ CONFIGURATION ============
@@ -392,4 +410,192 @@ export async function hasContext(channelId: string): Promise<boolean> {
   `;
 
   return result.length > 0;
+}
+
+// ============ CHATKIT-STYLE CONTEXT BUILDING ============
+
+/**
+ * Build a ChatKit-style context pack using threads and thread_items
+ *
+ * This provides:
+ * - Thread summary at the top for historical context
+ * - Recent items verbatim
+ * - Deterministic item selection with IDs for debugging
+ * - Token estimation
+ */
+export async function buildThreadContextPack(
+  channelId: string,
+  guildId: string | null,
+  triggerMessageId?: string
+): Promise<ContextPack | null> {
+  const threadId = generateThreadId(channelId, guildId);
+
+  try {
+    // Get thread with summary
+    const thread = await getThread(threadId);
+
+    // Get recent thread items
+    const items = await getThreadItems(threadId, {
+      limit: CONFIG.CANDIDATE_WINDOW,
+      types: ['user_message', 'assistant_message'],
+    });
+
+    if (items.length === 0 && !thread?.summary) {
+      // Fall back to legacy context building
+      return triggerMessageId
+        ? buildContextPack(channelId, triggerMessageId)
+        : null;
+    }
+
+    // Convert thread items to ContextMessages for compatibility
+    const contextMessages = threadItemsToContextMessages(items);
+
+    // Find trigger message
+    const triggerMessage = triggerMessageId
+      ? contextMessages.find(m => m.messageId === triggerMessageId) || null
+      : null;
+
+    // Select best messages
+    const selectedMessages = selectBestMessages(
+      contextMessages,
+      triggerMessageId || ''
+    );
+
+    // Find special messages
+    const replyTarget = triggerMessage
+      ? findReplyTarget(contextMessages, triggerMessage)
+      : null;
+    const lastBotExchange = findLastBotExchange(contextMessages, triggerMessage);
+
+    // Order and format
+    const orderedMessages = orderByTime(selectedMessages);
+
+    // Build transcript with summary at the top
+    let transcript = '';
+
+    // Add summary if available (ChatKit-style continuity)
+    if (thread?.summary) {
+      transcript += formatSummaryForContext(thread.summary);
+    }
+
+    // Add recent messages
+    transcript += formatTranscript(orderedMessages);
+
+    // Apply length budget
+    const finalTranscript = applyLengthBudget(transcript);
+
+    // Collect selected item IDs for debugging/replay
+    const selectedItemIds = items
+      .filter(item =>
+        selectedMessages.some(m =>
+          m.messageId === item.metadata.discordMessageId
+        )
+      )
+      .map(item => item.id);
+
+    // Estimate tokens (rough: ~4 chars per token)
+    const tokenEstimate = Math.ceil(finalTranscript.length / 4);
+
+    return {
+      transcript: finalTranscript,
+      messages: orderedMessages,
+      replyTarget,
+      lastBotExchange,
+      triggerMessage,
+      channelId,
+      messageCount: orderedMessages.length,
+      // ChatKit enhancements
+      threadId,
+      summary: thread?.summary || undefined,
+      selectedItemIds,
+      tokenEstimate,
+    };
+  } catch (error) {
+    console.error('[ContextBuilder] Failed to build thread context:', error);
+    // Fall back to legacy
+    return triggerMessageId
+      ? buildContextPack(channelId, triggerMessageId)
+      : null;
+  }
+}
+
+/**
+ * Convert ThreadItems to ContextMessages for compatibility
+ */
+function threadItemsToContextMessages(items: ThreadItem[]): ContextMessage[] {
+  return items.map(item => ({
+    messageId: item.metadata.discordMessageId || item.id,
+    authorId: item.authorId || 'unknown',
+    authorName: item.authorName || (item.role === 'assistant' ? 'Mutumbot' : 'User'),
+    isBot: item.role === 'assistant',
+    createdAt: item.createdAt,
+    content: item.content,
+    mentionsBot: item.metadata.mentionsBot || false,
+    replyToMessageId: item.metadata.replyToMessageId || null,
+    hasImage: item.metadata.hasImage || false,
+    hasAttachments: (item.metadata.attachments?.length || 0) > 0,
+    isDeleted: false,
+  }));
+}
+
+/**
+ * Get thread state for AI context
+ */
+export async function getThreadState(
+  channelId: string,
+  guildId: string | null
+): Promise<{ state: Record<string, unknown>; summary: string | null } | null> {
+  const threadId = generateThreadId(channelId, guildId);
+  const thread = await getThread(threadId);
+
+  if (!thread) return null;
+
+  return {
+    state: thread.state,
+    summary: thread.summary,
+  };
+}
+
+/**
+ * Format thread context for inclusion in system prompt
+ *
+ * Returns a formatted string with:
+ * - Thread state variables
+ * - Rolling summary
+ * - Ready to prepend to recent transcript
+ */
+export function formatThreadContextForPrompt(
+  state: Record<string, unknown> | null,
+  summary: string | null
+): string {
+  let context = '';
+
+  // Add relevant state variables
+  if (state) {
+    const relevantState: string[] = [];
+
+    if (state.primaryUsername) {
+      relevantState.push(`Primary user: ${state.primaryUsername}`);
+    }
+    if (state.isDm) {
+      relevantState.push('Context: Private DM conversation');
+    }
+    if (state.department) {
+      relevantState.push(`Department: ${state.department}`);
+    }
+    if (state.locale) {
+      relevantState.push(`Locale: ${state.locale}`);
+    }
+
+    if (relevantState.length > 0) {
+      context += `[THREAD STATE]\n${relevantState.join('\n')}\n\n`;
+    }
+  }
+
+  // Add summary
+  if (summary) {
+    context += formatSummaryForContext(summary);
+  }
+
+  return context;
 }

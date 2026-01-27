@@ -18,8 +18,16 @@ import {
 } from './services/conversationContext';
 import {
   buildContextPack,
+  buildThreadContextPack,
   ContextPack,
 } from './services/contextBuilder';
+import {
+  startRun,
+  completeRun,
+  failRun,
+  hasProcessedTrigger,
+  generateThreadId,
+} from './services/threads';
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -375,31 +383,63 @@ async function chatWithOpenAI(
  * Handle the /ask command using AI with Mutumbot personality
  * Uses OpenRouter (Gemini 2.5 Flash Lite) as primary, falls back to OpenAI if it fails
  *
+ * Now includes ChatKit-style run logging for:
+ * - Idempotency (duplicate message protection)
+ * - Debugging (replay context selection)
+ * - Reliability (track failures)
+ *
  * @param question - The user's question
  * @param channelId - Channel ID for context
  * @param aiContext - Optional tribute/stats context from database
  * @param messageId - Optional trigger message ID for building conversation transcript
+ * @param guildId - Optional guild ID for thread identification
  */
 export async function handleDrinkQuestion(
   question: string,
   channelId?: string,
   aiContext?: string,
-  messageId?: string
-): Promise<{ content: string }> {
+  messageId?: string,
+  guildId?: string | null
+): Promise<{ content: string; runId?: string }> {
   if (!OPENROUTER_API_KEY && !OPENAI_API_KEY) {
     return {
       content: `${ISEE_EMOJI} The spirits are SILENT. The ancient connection to the AI realm has not been established. Summon the bot administrator to configure the sacred API key.`,
     };
   }
 
+  // Idempotency check: don't process the same trigger twice
+  if (messageId) {
+    try {
+      const alreadyProcessed = await hasProcessedTrigger(messageId);
+      if (alreadyProcessed) {
+        console.log(`[RunLog] Skipping duplicate trigger: ${messageId}`);
+        return {
+          content: '', // Return empty - the response was already sent
+        };
+      }
+    } catch (error) {
+      // Log but continue - idempotency check is non-critical
+      console.error('[RunLog] Idempotency check failed:', error);
+    }
+  }
+
   // Build conversation transcript from database if we have message ID
   let transcript: string | undefined;
+  let contextPack: ContextPack | null = null;
+
   if (channelId && messageId) {
     try {
-      const contextPack = await buildContextPack(channelId, messageId);
-      if (contextPack && contextPack.transcript) {
+      // Try ChatKit-style context first (includes summary)
+      contextPack = await buildThreadContextPack(channelId, guildId ?? null, messageId);
+
+      if (!contextPack) {
+        // Fall back to legacy context building
+        contextPack = await buildContextPack(channelId, messageId);
+      }
+
+      if (contextPack?.transcript) {
         transcript = contextPack.transcript;
-        console.log(`[Context] Built transcript: ${contextPack.messageCount} messages`);
+        console.log(`[Context] Built transcript: ${contextPack.messageCount} messages${contextPack.summary ? ' (with summary)' : ''}`);
       }
     } catch (error) {
       console.error('[Context] Failed to build transcript:', error);
@@ -407,13 +447,32 @@ export async function handleDrinkQuestion(
     }
   }
 
+  // Start run logging
+  let runId: string | undefined;
+  if (channelId) {
+    try {
+      const threadId = generateThreadId(channelId, guildId ?? null);
+      runId = await startRun(threadId, {
+        provider: OPENROUTER_API_KEY ? 'openrouter' : 'openai',
+        model: OPENROUTER_API_KEY ? OPENROUTER_MODEL : 'gpt-5-nano-2025-08-07',
+        selectedItemIds: contextPack?.selectedItemIds,
+        tokenEstimate: contextPack?.tokenEstimate,
+      });
+    } catch (error) {
+      console.error('[RunLog] Failed to start run:', error);
+      // Continue without run logging
+    }
+  }
+
   let response: string | null = null;
+  let providerUsed: string | null = null;
 
   // Try OpenRouter first (Gemini 2.5 Flash Lite)
   if (OPENROUTER_API_KEY) {
     try {
       response = await chatWithOpenRouter(question, channelId, aiContext, transcript);
       if (response) {
+        providerUsed = 'openrouter';
         console.log('Chat handled by OpenRouter (Gemini 2.5 Flash Lite)');
       }
     } catch (error) {
@@ -426,6 +485,7 @@ export async function handleDrinkQuestion(
     try {
       response = await chatWithOpenAI(question, channelId, aiContext, transcript);
       if (response) {
+        providerUsed = 'openai';
         console.log('Chat handled by OpenAI (fallback)');
       }
     } catch (error) {
@@ -434,8 +494,18 @@ export async function handleDrinkQuestion(
   }
 
   if (!response) {
+    // Mark run as failed
+    if (runId) {
+      try {
+        await failRun(runId, 'All AI providers failed');
+      } catch (error) {
+        console.error('[RunLog] Failed to mark run as failed:', error);
+      }
+    }
+
     return {
       content: `${ISEE_EMOJI} The spirits are DISTURBED. Something has disrupted the ancient connection. Try again, mortal.`,
+      runId,
     };
   }
 
@@ -454,7 +524,19 @@ export async function handleDrinkQuestion(
     response = response.slice(0, 1997) + '...';
   }
 
-  return { content: response };
+  // Mark run as completed
+  if (runId) {
+    try {
+      await completeRun(runId, {
+        provider: providerUsed,
+        responseLength: response.length,
+      });
+    } catch (error) {
+      console.error('[RunLog] Failed to complete run:', error);
+    }
+  }
+
+  return { content: response, runId };
 }
 
 /**
@@ -465,18 +547,20 @@ export async function handleDrinkQuestion(
  * @param channelId - Channel ID for context
  * @param aiContext - Optional tribute/stats context from database
  * @param messageId - Optional trigger message ID for building conversation transcript
+ * @param guildId - Optional guild ID for thread identification
  */
 export async function handleMention(
   message: string,
   channelId: string,
   aiContext?: string,
-  messageId?: string
-): Promise<{ content: string }> {
+  messageId?: string,
+  guildId?: string | null
+): Promise<{ content: string; runId?: string }> {
   // If there's actual content beyond the mention, treat it as a question
   const cleanedMessage = message.replace(/<@!?\d+>/g, '').trim();
 
   if (cleanedMessage.length > 0) {
-    return handleDrinkQuestion(cleanedMessage, channelId, aiContext, messageId);
+    return handleDrinkQuestion(cleanedMessage, channelId, aiContext, messageId, guildId);
   }
 
   // Just a mention with no question - respond mysteriously but briefly

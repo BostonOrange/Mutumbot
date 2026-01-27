@@ -136,8 +136,14 @@ export async function handleMentionMessage(message: Message): Promise<Message | 
     ? await getAIContext(userId, channelId)
     : undefined;
 
-  // Pass message ID for building conversation transcript from database
-  const response = await handleMention(message.content, channelId, aiContext, message.id);
+  // Pass message ID and guild ID for ChatKit-style context building
+  const response = await handleMention(message.content, channelId, aiContext, message.id, guildId);
+
+  // Skip if empty response (idempotency - already processed)
+  if (!response.content) {
+    return null;
+  }
+
   const reply = await message.reply(response.content);
   return reply;
 }

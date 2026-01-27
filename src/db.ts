@@ -4,9 +4,15 @@
  * Persistent storage using Neon DB (serverless Postgres).
  * This is the ONLY source of truth - no in-memory fallback.
  * Stores rich tribute data for AI context and memory.
+ *
+ * Also initializes ChatKit-style tables for:
+ * - threads: Session state and rolling summary
+ * - thread_items: First-class transcript storage
+ * - runs: Idempotency and debugging
  */
 
 import { neon, neonConfig } from '@neondatabase/serverless';
+import { initializeThreadTables } from './services/threads';
 
 // Enable connection pooling for better performance
 neonConfig.fetchConnectionCache = true;
@@ -106,6 +112,9 @@ export async function initializeDatabase(): Promise<void> {
     await db`CREATE INDEX IF NOT EXISTS idx_messages_ingested ON discord_messages_recent(ingested_at)`;
 
     console.log('Database tables initialized successfully');
+
+    // Initialize ChatKit-style tables (threads, thread_items, runs)
+    await initializeThreadTables();
   } catch (error) {
     console.error('Failed to initialize database:', error);
     throw error;
