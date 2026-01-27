@@ -355,7 +355,7 @@ async function ensureDefaults(): Promise<void> {
 
   if (existingAgent.length === 0) {
     // Create default agent with the tiki persona (stored in DB, not hardcoded)
-    const defaultCapabilities = ['image_analysis', 'tribute_tracking'];
+    const defaultCapabilities = ['image_analysis', 'tribute_tracking', 'scheduled_messages'];
     const result = await sql`
       INSERT INTO agents (name, description, system_prompt, custom_instructions, capabilities, model, params, is_default)
       VALUES (

@@ -31,6 +31,12 @@ import {
   resolveConfigWithDefaults,
   ResolvedConfig,
 } from './services/agents';
+import {
+  getToolsForCapabilities,
+  executeTool,
+  ToolCall,
+  ToolResult,
+} from './services/tools';
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
@@ -214,16 +220,18 @@ export async function analyzeImage(
 }
 
 /**
- * Chat with OpenRouter with conversation history
+ * Chat with OpenRouter with conversation history and tool support
  * Uses agent config for model selection and system prompt
  * All prompts come from database (except hardcoded safety guardrails)
+ * Supports function calling for scheduling, etc.
  */
 async function chatWithOpenRouter(
   question: string,
   channelId?: string,
   aiContext?: string,
   transcript?: string,
-  config?: ResolvedConfig
+  config?: ResolvedConfig,
+  threadId?: string
 ): Promise<string | null> {
   if (!openrouter || !config) {
     return null;
@@ -242,8 +250,30 @@ async function chatWithOpenRouter(
     systemPrompt += `\n\n--- RECENT CHANNEL CONVERSATION ---\nThis is the recent conversation in this channel. Use this to understand context:\n${transcript}`;
   }
 
+  // Get tools available to this agent based on capabilities
+  const tools = getToolsForCapabilities(config.agent.capabilities);
+  if (tools.length > 0) {
+    systemPrompt += `\n\n--- AVAILABLE TOOLS ---
+You have access to tools for managing scheduled events. Use them when users ask to:
+- Set up reminders or scheduled messages
+- List existing scheduled events
+- Cancel or modify reminders
+- Create recurring announcements (like Friday tribute reminders)
+
+When parsing time requests:
+- "every Friday at 5pm" = cron "0 17 * * 5"
+- "daily at 9am" = cron "0 9 * * *"
+- "weekdays at noon" = cron "0 12 * * 1-5"
+- Default timezone is Europe/Stockholm unless specified`;
+  }
+
   // Build messages array
-  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+  const messages: Array<{
+    role: 'system' | 'user' | 'assistant' | 'tool';
+    content: string | null;
+    tool_calls?: ToolCall[];
+    tool_call_id?: string;
+  }> = [
     { role: 'system', content: systemPrompt },
     { role: 'assistant', content: MUTUMBOT_AWAKENING },
   ];
@@ -263,18 +293,72 @@ async function chatWithOpenRouter(
   messages.push({ role: 'user', content: question });
 
   // Use agent's model or fall back to default
-  const model = config?.agent.model || DEFAULT_MODEL;
-  const params = config?.agent.params || {};
+  const model = config.agent.model || DEFAULT_MODEL;
+  const params = config.agent.params || {};
 
-  const response = await openrouter.chat.completions.create({
+  // Make the API call with tools if available
+  const baseParams = {
     model,
-    messages,
+    messages: messages as any,
     temperature: params.temperature,
     top_p: params.topP,
     max_tokens: params.maxTokens,
-  });
+  };
 
-  return response.choices[0]?.message?.content || null;
+  const requestParams = tools.length > 0
+    ? { ...baseParams, tools: tools as any, tool_choice: 'auto' as const }
+    : baseParams;
+
+  let response = await openrouter.chat.completions.create(requestParams);
+  let message = response.choices[0]?.message;
+
+  // Handle tool calls in a loop (max 5 iterations to prevent infinite loops)
+  let iterations = 0;
+  const MAX_ITERATIONS = 5;
+
+  while (message?.tool_calls && message.tool_calls.length > 0 && iterations < MAX_ITERATIONS) {
+    iterations++;
+    console.log(`[Tools] Processing ${message.tool_calls.length} tool call(s), iteration ${iterations}`);
+
+    // Add assistant message with tool calls
+    messages.push({
+      role: 'assistant',
+      content: message.content,
+      tool_calls: message.tool_calls as ToolCall[],
+    });
+
+    // Execute each tool call
+    for (const toolCall of message.tool_calls as any[]) {
+      console.log(`[Tools] Executing: ${toolCall.function?.name}`);
+      const result = await executeTool(
+        toolCall as ToolCall,
+        threadId || '',
+        config.agent.capabilities
+      );
+
+      // Add tool result to messages
+      messages.push({
+        role: 'tool',
+        content: result.content,
+        tool_call_id: result.tool_call_id,
+      });
+    }
+
+    // Make another API call with tool results
+    response = await openrouter.chat.completions.create({
+      ...baseParams,
+      tools: tools.length > 0 ? tools as any : undefined,
+      tool_choice: tools.length > 0 ? 'auto' as const : undefined,
+      messages: messages as any,
+    });
+    message = response.choices[0]?.message;
+  }
+
+  if (iterations >= MAX_ITERATIONS) {
+    console.warn('[Tools] Max iterations reached, returning last response');
+  }
+
+  return message?.content || null;
 }
 
 /**
@@ -380,7 +464,7 @@ export async function handleDrinkQuestion(
 
   // Use OpenRouter (the only AI provider)
   try {
-    response = await chatWithOpenRouter(question, channelId, aiContext, transcript, config);
+    response = await chatWithOpenRouter(question, channelId, aiContext, transcript, config, threadId ?? undefined);
     if (response) {
       console.log(`Chat handled by OpenRouter (${config.agent.model || DEFAULT_MODEL})`);
     }
