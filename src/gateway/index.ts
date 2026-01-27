@@ -20,6 +20,7 @@ import {
   ingestBotMessage,
 } from '../services/messageIngestor';
 import { registerChannelLookup } from '../services/tools';
+import { initializeEventScheduler } from './eventScheduler';
 
 // Environment variables
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -82,6 +83,40 @@ client.once(Events.ClientReady, async readyClient => {
       }));
   });
   console.log('Channel lookup registered for AI tools');
+
+  // Initialize event scheduler for database-driven cron jobs
+  try {
+    await initializeEventScheduler(async (threadId: string, message: string): Promise<boolean> => {
+      // Parse threadId to get guild and channel
+      const parts = threadId.split(':');
+      if (parts[0] !== 'discord' || parts.length < 3) {
+        console.error('[EventScheduler] Invalid threadId format:', threadId);
+        return false;
+      }
+
+      const guildId = parts[1];
+      const channelId = parts[2];
+
+      const guild = readyClient.guilds.cache.get(guildId);
+      if (!guild) {
+        console.error('[EventScheduler] Guild not found:', guildId);
+        return false;
+      }
+
+      const channel = guild.channels.cache.get(channelId);
+      if (!channel || !channel.isTextBased()) {
+        console.error('[EventScheduler] Text channel not found:', channelId);
+        return false;
+      }
+
+      await channel.send(message);
+      console.log(`[EventScheduler] Sent message to ${guild.name}/#${channel.name}`);
+      return true;
+    });
+    console.log('Event scheduler initialized');
+  } catch (error) {
+    console.error('Failed to initialize event scheduler:', error);
+  }
 
   // Start Friday cron job if party channel is configured
   if (PARTY_CHANNEL_ID) {
