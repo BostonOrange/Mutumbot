@@ -280,7 +280,7 @@ export async function initializeAgentTables(): Promise<void> {
         name VARCHAR(100) NOT NULL,
         description TEXT,
         agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
-        context_policy JSONB DEFAULT '${JSON.stringify(DEFAULT_CONTEXT_POLICY)}',
+        context_policy JSONB DEFAULT '{"maxMessages": 20, "maxTokens": 4000, "includeRollingSummary": true}',
         is_default BOOLEAN DEFAULT FALSE,
         is_active BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
