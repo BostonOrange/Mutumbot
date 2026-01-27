@@ -59,6 +59,51 @@ export interface ToolResult {
   content: string;
 }
 
+// ============ DISCORD INFO CALLBACK ============
+
+/**
+ * Callback for getting Discord channel info
+ * Must be provided by the gateway layer
+ */
+export type GetChannelsCallback = (guildId: string) => Promise<Array<{
+  id: string;
+  name: string;
+  type: 'text' | 'voice' | 'category' | 'thread' | 'other';
+}>>;
+
+let getChannelsCallback: GetChannelsCallback | null = null;
+
+/**
+ * Register the channel lookup callback
+ * Called by the gateway on startup
+ */
+export function registerChannelLookup(callback: GetChannelsCallback): void {
+  getChannelsCallback = callback;
+  console.log('[Tools] Channel lookup callback registered');
+}
+
+// ============ TOOL DEFINITIONS FOR DISCORD INFO ============
+
+export const DISCORD_TOOLS: ToolDefinition[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'list_channels',
+      description: 'List all text channels in the current server/guild. Use this to find channel IDs when the user mentions a channel by name (like "#tiki-lounge"). Returns channel names and IDs.',
+      parameters: {
+        type: 'object',
+        properties: {
+          guild_id: {
+            type: 'string',
+            description: 'The guild/server ID to list channels for. If not provided, uses the current guild.',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+];
+
 // ============ TOOL DEFINITIONS FOR SCHEDULING ============
 
 export const SCHEDULING_TOOLS: ToolDefinition[] = [
@@ -180,6 +225,9 @@ export const SCHEDULING_TOOLS: ToolDefinition[] = [
 export function getToolsForCapabilities(capabilities: string[]): ToolDefinition[] {
   const tools: ToolDefinition[] = [];
 
+  // Discord info tools - always available for channel lookups
+  tools.push(...DISCORD_TOOLS);
+
   // Scheduling tools require 'scheduled_messages' capability
   if (capabilities.includes(AVAILABLE_CAPABILITIES.SCHEDULED_MESSAGES)) {
     tools.push(...SCHEDULING_TOOLS);
@@ -203,6 +251,10 @@ export async function executeTool(
     let result: string;
 
     switch (name) {
+      case 'list_channels':
+        result = await executeListChannels(args, threadId);
+        break;
+
       case 'create_scheduled_event':
         result = await executeCreateScheduledEvent(args, threadId, capabilities);
         break;
@@ -240,6 +292,48 @@ export async function executeTool(
 }
 
 // ============ TOOL IMPLEMENTATIONS ============
+
+async function executeListChannels(
+  args: { guild_id?: string },
+  threadId: string
+): Promise<string> {
+  // Extract guild ID from threadId if not provided
+  let guildId = args.guild_id;
+
+  if (!guildId) {
+    const parts = threadId.split(':');
+    if (parts[0] === 'discord' && parts[1] !== 'dm' && parts[1]) {
+      guildId = parts[1];
+    } else {
+      return JSON.stringify({
+        error: 'Cannot list channels: not in a guild context. Please provide guild_id.',
+      });
+    }
+  }
+
+  if (!getChannelsCallback) {
+    return JSON.stringify({
+      error: 'Channel lookup not available',
+    });
+  }
+
+  try {
+    const channels = await getChannelsCallback(guildId);
+    const textChannels = channels.filter(c => c.type === 'text');
+
+    return JSON.stringify({
+      message: `Found ${textChannels.length} text channel(s) in this server`,
+      channels: textChannels.map(c => ({
+        id: c.id,
+        name: c.name,
+      })),
+    });
+  } catch (error) {
+    return JSON.stringify({
+      error: `Failed to list channels: ${(error as Error).message}`,
+    });
+  }
+}
 
 async function executeCreateScheduledEvent(
   args: {
