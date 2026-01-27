@@ -7,7 +7,6 @@
 
 import OpenAI from 'openai';
 import {
-  MUTUMBOT_SYSTEM_PROMPT,
   MUTUMBOT_AWAKENING,
   ISEE_EMOJI,
   processIseeMarkers,
@@ -18,13 +17,30 @@ import {
 } from './services/conversationContext';
 import {
   buildContextPack,
+  buildThreadContextPack,
   ContextPack,
 } from './services/contextBuilder';
+import {
+  startRun,
+  completeRun,
+  failRun,
+  hasProcessedTrigger,
+  generateThreadId,
+} from './services/threads';
+import {
+  resolveConfigWithDefaults,
+  ResolvedConfig,
+} from './services/agents';
+import {
+  getToolsForCapabilities,
+  executeTool,
+  ToolCall,
+  ToolResult,
+} from './services/tools';
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-// OpenRouter client for Gemini 2.5 Flash Lite
+// OpenRouter client - the ONLY AI provider (no fallbacks)
 const openrouter = OPENROUTER_API_KEY
   ? new OpenAI({
       baseURL: 'https://openrouter.ai/api/v1',
@@ -32,7 +48,7 @@ const openrouter = OPENROUTER_API_KEY
     })
   : null;
 
-const OPENROUTER_MODEL = 'google/gemini-2.5-flash-lite';
+const DEFAULT_MODEL = 'google/gemini-2.5-flash-lite';
 
 // Tribute scoring system
 export const TRIBUTE_SCORES = {
@@ -124,7 +140,7 @@ async function analyzeImageWithOpenRouter(
   }
 
   const response = await openrouter.chat.completions.create({
-    model: OPENROUTER_MODEL,
+    model: DEFAULT_MODEL,
     messages: [
       {
         role: 'user',
@@ -152,45 +168,9 @@ async function analyzeImageWithOpenRouter(
 /**
  * Analyze image using OpenAI (fallback)
  */
-async function analyzeImageWithOpenAI(
-  base64: string,
-  contentType: string,
-  prompt: string
-): Promise<ImageAnalysis | null> {
-  if (!OPENAI_API_KEY) {
-    return null;
-  }
-
-  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
-  const response = await openai.responses.create({
-    model: 'gpt-5-nano-2025-08-07',
-    input: [
-      {
-        role: 'user',
-        content: [
-          { type: 'input_text', text: prompt },
-          {
-            type: 'input_image',
-            image_url: `data:${contentType};base64,${base64}`,
-            detail: 'auto',
-          },
-        ],
-      },
-    ],
-  });
-
-  const responseText = response.output_text?.trim();
-  if (!responseText) {
-    return null;
-  }
-
-  return parseImageAnalysisResponse(responseText);
-}
-
 /**
  * Analyze an image and generate a full AI response for the tribute
- * Uses OpenRouter (Gemini 2.5 Flash Lite) as primary, falls back to OpenAI if it fails
+ * Uses OpenRouter only (no fallbacks)
  */
 export async function analyzeImage(
   imageUrl: string,
@@ -198,13 +178,10 @@ export async function analyzeImage(
   isFriday?: boolean,
   isDM?: boolean
 ): Promise<ImageAnalysis | null> {
-  // Need at least one AI provider
-  if (!OPENROUTER_API_KEY && !OPENAI_API_KEY) {
-    console.error('No AI API keys configured for image analysis. OPENROUTER_API_KEY:', !!OPENROUTER_API_KEY, 'OPENAI_API_KEY:', !!OPENAI_API_KEY);
+  if (!OPENROUTER_API_KEY) {
+    console.error('OPENROUTER_API_KEY not configured for image analysis');
     return null;
   }
-
-  console.log('analyzeImage called. OpenRouter available:', !!OPENROUTER_API_KEY, 'OpenAI available:', !!OPENAI_API_KEY);
 
   try {
     // Fetch the image from Discord CDN
@@ -221,37 +198,20 @@ export async function analyzeImage(
 
     console.log('Image fetched successfully. Size:', base64.length, 'Content-Type:', contentType);
 
-    // Try OpenRouter first (primary - Gemini 2.5 Flash Lite)
-    if (OPENROUTER_API_KEY) {
-      try {
-        console.log('Attempting OpenRouter (Gemini 2.5 Flash Lite) image analysis...');
-        const openrouterResult = await analyzeImageWithOpenRouter(base64, contentType, prompt);
-        if (openrouterResult) {
-          console.log('Image analyzed with OpenRouter. Category:', openrouterResult.category, 'Score:', openrouterResult.score);
-          return openrouterResult;
-        }
-        console.error('OpenRouter returned null result');
-      } catch (error) {
-        console.error('OpenRouter analysis failed, trying OpenAI fallback. Error:', (error as Error).message || error);
+    // Use OpenRouter for image analysis
+    try {
+      console.log('Analyzing image with OpenRouter...');
+      const result = await analyzeImageWithOpenRouter(base64, contentType, prompt);
+      if (result) {
+        console.log('Image analyzed. Category:', result.category, 'Score:', result.score);
+        return result;
       }
+      console.error('OpenRouter returned null result');
+    } catch (error) {
+      console.error('OpenRouter analysis failed:', (error as Error).message || error);
     }
 
-    // Fallback to OpenAI
-    if (OPENAI_API_KEY) {
-      try {
-        console.log('Attempting OpenAI image analysis (fallback)...');
-        const openaiResult = await analyzeImageWithOpenAI(base64, contentType, prompt);
-        if (openaiResult) {
-          console.log('Image analyzed with OpenAI. Category:', openaiResult.category, 'Score:', openaiResult.score);
-          return openaiResult;
-        }
-        console.error('OpenAI returned null result');
-      } catch (error) {
-        console.error('OpenAI fallback also failed. Error:', (error as Error).message || error);
-      }
-    }
-
-    console.error('All AI providers failed for image analysis');
+    console.error('Image analysis failed');
     return null;
   } catch (error) {
     console.error('Image analysis error:', (error as Error).message || error);
@@ -260,21 +220,25 @@ export async function analyzeImage(
 }
 
 /**
- * Chat with OpenRouter (Gemini 2.5 Flash Lite) with conversation history
- * Supports both in-memory context and database transcript context
+ * Chat with OpenRouter with conversation history and tool support
+ * Uses agent config for model selection and system prompt
+ * All prompts come from database (except hardcoded safety guardrails)
+ * Supports function calling for scheduling, etc.
  */
 async function chatWithOpenRouter(
   question: string,
   channelId?: string,
   aiContext?: string,
-  transcript?: string
+  transcript?: string,
+  config?: ResolvedConfig,
+  threadId?: string
 ): Promise<string | null> {
-  if (!openrouter) {
+  if (!openrouter || !config) {
     return null;
   }
 
-  // Build system prompt with optional database context (tribute stats) and transcript
-  let systemPrompt = MUTUMBOT_SYSTEM_PROMPT;
+  // System prompt comes entirely from config (safety + agent persona)
+  let systemPrompt = config.systemPrompt;
 
   // Add database context (tribute statistics, leaderboards)
   if (aiContext) {
@@ -286,8 +250,30 @@ async function chatWithOpenRouter(
     systemPrompt += `\n\n--- RECENT CHANNEL CONVERSATION ---\nThis is the recent conversation in this channel. Use this to understand context:\n${transcript}`;
   }
 
+  // Get tools available to this agent based on capabilities
+  const tools = getToolsForCapabilities(config.agent.capabilities);
+  if (tools.length > 0) {
+    systemPrompt += `\n\n--- AVAILABLE TOOLS ---
+You have access to tools for managing scheduled events. Use them when users ask to:
+- Set up reminders or scheduled messages
+- List existing scheduled events
+- Cancel or modify reminders
+- Create recurring announcements (like Friday tribute reminders)
+
+When parsing time requests:
+- "every Friday at 5pm" = cron "0 17 * * 5"
+- "daily at 9am" = cron "0 9 * * *"
+- "weekdays at noon" = cron "0 12 * * 1-5"
+- Default timezone is Europe/Stockholm unless specified`;
+  }
+
   // Build messages array
-  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+  const messages: Array<{
+    role: 'system' | 'user' | 'assistant' | 'tool';
+    content: string | null;
+    tool_calls?: ToolCall[];
+    tool_call_id?: string;
+  }> = [
     { role: 'system', content: systemPrompt },
     { role: 'assistant', content: MUTUMBOT_AWAKENING },
   ];
@@ -306,100 +292,136 @@ async function chatWithOpenRouter(
   // Add the current question
   messages.push({ role: 'user', content: question });
 
-  const response = await openrouter.chat.completions.create({
-    model: OPENROUTER_MODEL,
-    messages,
-  });
+  // Use agent's model or fall back to default
+  const model = config.agent.model || DEFAULT_MODEL;
+  const params = config.agent.params || {};
 
-  return response.choices[0]?.message?.content || null;
-}
+  // Make the API call with tools if available
+  const baseParams = {
+    model,
+    messages: messages as any,
+    temperature: params.temperature,
+    top_p: params.topP,
+    max_tokens: params.maxTokens,
+  };
 
-/**
- * Chat with OpenAI (with conversation history) - fallback
- * Now supports both in-memory context and database transcript context
- */
-async function chatWithOpenAI(
-  question: string,
-  channelId?: string,
-  aiContext?: string,
-  transcript?: string
-): Promise<string | null> {
-  if (!OPENAI_API_KEY) {
-    return null;
-  }
+  const requestParams = tools.length > 0
+    ? { ...baseParams, tools: tools as any, tool_choice: 'auto' as const }
+    : baseParams;
 
-  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+  let response = await openrouter.chat.completions.create(requestParams);
+  let message = response.choices[0]?.message;
 
-  // Build system prompt with optional database context and transcript
-  let systemPrompt = MUTUMBOT_SYSTEM_PROMPT;
+  // Handle tool calls in a loop (max 5 iterations to prevent infinite loops)
+  let iterations = 0;
+  const MAX_ITERATIONS = 5;
 
-  // Add database context (tribute statistics, leaderboards)
-  if (aiContext) {
-    systemPrompt += `\n\n--- CURRENT DATABASE CONTEXT ---\n${aiContext}`;
-  }
+  while (message?.tool_calls && message.tool_calls.length > 0 && iterations < MAX_ITERATIONS) {
+    iterations++;
+    console.log(`[Tools] Processing ${message.tool_calls.length} tool call(s), iteration ${iterations}`);
 
-  // Add channel transcript (recent conversation history from DB)
-  if (transcript) {
-    systemPrompt += `\n\n--- RECENT CHANNEL CONVERSATION ---\nThis is the recent conversation in this channel. Use this to understand context:\n${transcript}`;
-  }
+    // Add assistant message with tool calls
+    messages.push({
+      role: 'assistant',
+      content: message.content,
+      tool_calls: message.tool_calls as ToolCall[],
+    });
 
-  // Build input array for OpenAI responses API
-  const input: Array<{ role: string; content: string }> = [
-    { role: 'developer', content: systemPrompt },
-    { role: 'assistant', content: MUTUMBOT_AWAKENING },
-  ];
+    // Execute each tool call
+    for (const toolCall of message.tool_calls as any[]) {
+      console.log(`[Tools] Executing: ${toolCall.function?.name}`);
+      const result = await executeTool(
+        toolCall as ToolCall,
+        threadId || '',
+        config.agent.capabilities
+      );
 
-  // If we have a transcript, we don't need the in-memory context
-  // Otherwise, fall back to in-memory for backward compatibility
-  if (!transcript && channelId) {
-    const contextHistory = formatContextForAI(channelId);
-    for (const entry of contextHistory) {
-      const role = entry.role === 'user' ? 'user' : 'assistant';
-      const text = entry.parts.map((p: { text: string }) => p.text).join('');
-      input.push({ role, content: text });
+      // Add tool result to messages
+      messages.push({
+        role: 'tool',
+        content: result.content,
+        tool_call_id: result.tool_call_id,
+      });
     }
+
+    // Make another API call with tool results
+    response = await openrouter.chat.completions.create({
+      ...baseParams,
+      tools: tools.length > 0 ? tools as any : undefined,
+      tool_choice: tools.length > 0 ? 'auto' as const : undefined,
+      messages: messages as any,
+    });
+    message = response.choices[0]?.message;
   }
 
-  // Add the current question
-  input.push({ role: 'user', content: question });
+  if (iterations >= MAX_ITERATIONS) {
+    console.warn('[Tools] Max iterations reached, returning last response');
+  }
 
-  const response = await openai.responses.create({
-    model: 'gpt-5-nano-2025-08-07',
-    input: input as any,
-  });
-
-  return response.output_text || null;
+  return message?.content || null;
 }
 
 /**
  * Handle the /ask command using AI with Mutumbot personality
  * Uses OpenRouter (Gemini 2.5 Flash Lite) as primary, falls back to OpenAI if it fails
  *
+ * Now includes ChatKit-style run logging for:
+ * - Idempotency (duplicate message protection)
+ * - Debugging (replay context selection)
+ * - Reliability (track failures)
+ *
  * @param question - The user's question
  * @param channelId - Channel ID for context
  * @param aiContext - Optional tribute/stats context from database
  * @param messageId - Optional trigger message ID for building conversation transcript
+ * @param guildId - Optional guild ID for thread identification
  */
 export async function handleDrinkQuestion(
   question: string,
   channelId?: string,
   aiContext?: string,
-  messageId?: string
-): Promise<{ content: string }> {
-  if (!OPENROUTER_API_KEY && !OPENAI_API_KEY) {
+  messageId?: string,
+  guildId?: string | null
+): Promise<{ content: string; runId?: string }> {
+  if (!OPENROUTER_API_KEY) {
     return {
-      content: `${ISEE_EMOJI} The spirits are SILENT. The ancient connection to the AI realm has not been established. Summon the bot administrator to configure the sacred API key.`,
+      content: `${ISEE_EMOJI} The spirits are SILENT. The ancient connection to the AI realm has not been established. Summon the bot administrator to configure the OPENROUTER_API_KEY.`,
     };
+  }
+
+  // Idempotency check: don't process the same trigger twice
+  if (messageId) {
+    try {
+      const alreadyProcessed = await hasProcessedTrigger(messageId);
+      if (alreadyProcessed) {
+        console.log(`[RunLog] Skipping duplicate trigger: ${messageId}`);
+        return {
+          content: '', // Return empty - the response was already sent
+        };
+      }
+    } catch (error) {
+      // Log but continue - idempotency check is non-critical
+      console.error('[RunLog] Idempotency check failed:', error);
+    }
   }
 
   // Build conversation transcript from database if we have message ID
   let transcript: string | undefined;
+  let contextPack: ContextPack | null = null;
+
   if (channelId && messageId) {
     try {
-      const contextPack = await buildContextPack(channelId, messageId);
-      if (contextPack && contextPack.transcript) {
+      // Try ChatKit-style context first (includes summary)
+      contextPack = await buildThreadContextPack(channelId, guildId ?? null, messageId);
+
+      if (!contextPack) {
+        // Fall back to legacy context building
+        contextPack = await buildContextPack(channelId, messageId);
+      }
+
+      if (contextPack?.transcript) {
         transcript = contextPack.transcript;
-        console.log(`[Context] Built transcript: ${contextPack.messageCount} messages`);
+        console.log(`[Context] Built transcript: ${contextPack.messageCount} messages${contextPack.summary ? ' (with summary)' : ''}`);
       }
     } catch (error) {
       console.error('[Context] Failed to build transcript:', error);
@@ -407,35 +429,62 @@ export async function handleDrinkQuestion(
     }
   }
 
-  let response: string | null = null;
+  // Resolve agent/workflow config for this thread (persona comes from DB)
+  const threadId = channelId ? generateThreadId(channelId, guildId ?? null) : null;
+  let config: ResolvedConfig | undefined;
+  try {
+    config = await resolveConfigWithDefaults(threadId);
+    if (config.agent.name !== 'Fallback Agent') {
+      console.log(`[Agent] Using agent: ${config.agent.name}, model: ${config.agent.model}`);
+    }
+  } catch (error) {
+    console.error('[Agent] Failed to resolve config:', error);
+    return {
+      content: `${ISEE_EMOJI} The spirits are CONFUSED. Failed to resolve agent configuration.`,
+    };
+  }
 
-  // Try OpenRouter first (Gemini 2.5 Flash Lite)
-  if (OPENROUTER_API_KEY) {
+  // Start run logging
+  let runId: string | undefined;
+  if (channelId && threadId && config) {
     try {
-      response = await chatWithOpenRouter(question, channelId, aiContext, transcript);
-      if (response) {
-        console.log('Chat handled by OpenRouter (Gemini 2.5 Flash Lite)');
-      }
+      runId = await startRun(threadId, {
+        provider: 'openrouter',
+        model: config.agent.model || DEFAULT_MODEL,
+        selectedItemIds: contextPack?.selectedItemIds,
+        tokenEstimate: contextPack?.tokenEstimate,
+      });
     } catch (error) {
-      console.error('OpenRouter chat failed, trying OpenAI fallback:', error);
+      console.error('[RunLog] Failed to start run:', error);
+      // Continue without run logging
     }
   }
 
-  // Fallback to OpenAI
-  if (!response && OPENAI_API_KEY) {
-    try {
-      response = await chatWithOpenAI(question, channelId, aiContext, transcript);
-      if (response) {
-        console.log('Chat handled by OpenAI (fallback)');
-      }
-    } catch (error) {
-      console.error('OpenAI chat fallback also failed:', error);
+  let response: string | null = null;
+
+  // Use OpenRouter (the only AI provider)
+  try {
+    response = await chatWithOpenRouter(question, channelId, aiContext, transcript, config, threadId ?? undefined);
+    if (response) {
+      console.log(`Chat handled by OpenRouter (${config.agent.model || DEFAULT_MODEL})`);
     }
+  } catch (error) {
+    console.error('OpenRouter chat failed:', error);
   }
 
   if (!response) {
+    // Mark run as failed
+    if (runId) {
+      try {
+        await failRun(runId, 'All AI providers failed');
+      } catch (error) {
+        console.error('[RunLog] Failed to mark run as failed:', error);
+      }
+    }
+
     return {
       content: `${ISEE_EMOJI} The spirits are DISTURBED. Something has disrupted the ancient connection. Try again, mortal.`,
+      runId,
     };
   }
 
@@ -454,7 +503,19 @@ export async function handleDrinkQuestion(
     response = response.slice(0, 1997) + '...';
   }
 
-  return { content: response };
+  // Mark run as completed
+  if (runId) {
+    try {
+      await completeRun(runId, {
+        provider: 'openrouter',
+        responseLength: response.length,
+      });
+    } catch (error) {
+      console.error('[RunLog] Failed to complete run:', error);
+    }
+  }
+
+  return { content: response, runId };
 }
 
 /**
@@ -465,18 +526,20 @@ export async function handleDrinkQuestion(
  * @param channelId - Channel ID for context
  * @param aiContext - Optional tribute/stats context from database
  * @param messageId - Optional trigger message ID for building conversation transcript
+ * @param guildId - Optional guild ID for thread identification
  */
 export async function handleMention(
   message: string,
   channelId: string,
   aiContext?: string,
-  messageId?: string
-): Promise<{ content: string }> {
+  messageId?: string,
+  guildId?: string | null
+): Promise<{ content: string; runId?: string }> {
   // If there's actual content beyond the mention, treat it as a question
   const cleanedMessage = message.replace(/<@!?\d+>/g, '').trim();
 
   if (cleanedMessage.length > 0) {
-    return handleDrinkQuestion(cleanedMessage, channelId, aiContext, messageId);
+    return handleDrinkQuestion(cleanedMessage, channelId, aiContext, messageId, guildId);
   }
 
   // Just a mention with no question - respond mysteriously but briefly
@@ -502,7 +565,7 @@ async function generateWithOpenRouter(prompt: string): Promise<string | null> {
   }
 
   const response = await openrouter.chat.completions.create({
-    model: OPENROUTER_MODEL,
+    model: DEFAULT_MODEL,
     messages: [{ role: 'user', content: prompt }],
   });
 
@@ -510,31 +573,13 @@ async function generateWithOpenRouter(prompt: string): Promise<string | null> {
 }
 
 /**
- * Generate simple text with OpenAI (fallback)
- */
-async function generateWithOpenAI(prompt: string): Promise<string | null> {
-  if (!OPENAI_API_KEY) {
-    return null;
-  }
-
-  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
-  const response = await openai.responses.create({
-    model: 'gpt-5-nano-2025-08-07',
-    input: prompt,
-  });
-
-  return response.output_text || null;
-}
-
-/**
  * Handle the legacy /drink random command - random tiki/drink fact
- * Uses OpenRouter (Gemini 2.5 Flash Lite) as primary, falls back to OpenAI if it fails
+ * Uses OpenRouter only (no fallbacks)
  */
 export async function handleRandomDrinkFact(): Promise<{ content: string }> {
-  if (!OPENROUTER_API_KEY && !OPENAI_API_KEY) {
+  if (!OPENROUTER_API_KEY) {
     return {
-      content: `${ISEE_EMOJI} The spirits are SILENT. The sacred API connection is not configured.`,
+      content: `${ISEE_EMOJI} The spirits are SILENT. OPENROUTER_API_KEY is not configured.`,
     };
   }
 
@@ -554,28 +599,13 @@ export async function handleRandomDrinkFact(): Promise<{ content: string }> {
 
   let response: string | null = null;
 
-  // Try OpenRouter first (Gemini 2.5 Flash Lite)
-  if (OPENROUTER_API_KEY) {
-    try {
-      response = await generateWithOpenRouter(prompt);
-      if (response) {
-        console.log('Random fact generated by OpenRouter (Gemini 2.5 Flash Lite)');
-      }
-    } catch (error) {
-      console.error('OpenRouter generation failed, trying OpenAI fallback:', error);
+  try {
+    response = await generateWithOpenRouter(prompt);
+    if (response) {
+      console.log('Random fact generated by OpenRouter');
     }
-  }
-
-  // Fallback to OpenAI
-  if (!response && OPENAI_API_KEY) {
-    try {
-      response = await generateWithOpenAI(prompt);
-      if (response) {
-        console.log('Random fact generated by OpenAI (fallback)');
-      }
-    } catch (error) {
-      console.error('OpenAI generation fallback also failed:', error);
-    }
+  } catch (error) {
+    console.error('OpenRouter generation failed:', error);
   }
 
   if (!response) {

@@ -4,10 +4,20 @@
  * Captures Discord events (message create/update/delete) and stores them
  * in Neon DB for building LLM context. Implements idempotent writes
  * with proper handling of edits, deletes, replies, and attachments.
+ *
+ * Now also writes to the ChatKit-style thread_items table for first-class
+ * transcript storage with full run logging support.
  */
 
 import { neon, neonConfig } from '@neondatabase/serverless';
 import { Message, PartialMessage } from 'discord.js';
+import {
+  getOrCreateThread,
+  addThreadItem,
+  generateThreadId,
+  ThreadItemMetadata,
+} from './threads';
+import { maybeSummarize } from './summarizer';
 
 neonConfig.fetchConnectionCache = true;
 
@@ -48,6 +58,7 @@ export interface AttachmentInfo {
 /**
  * Ingest a MESSAGE_CREATE event
  * Upserts the message (idempotent - safe to call multiple times)
+ * Now also writes to ChatKit-style thread_items table
  */
 export async function ingestMessageCreate(
   message: Message,
@@ -66,6 +77,7 @@ export async function ingestMessageCreate(
   const record = messageToRecord(message, botUserId);
 
   try {
+    // Legacy: Write to discord_messages_recent for backward compatibility
     await sql`
       INSERT INTO discord_messages_recent (
         message_id, channel_id, guild_id, author_id, author_name,
@@ -83,8 +95,56 @@ export async function ingestMessageCreate(
         content = EXCLUDED.content,
         edited_at = EXCLUDED.edited_at
     `;
+
+    // ChatKit: Write to thread_items for first-class transcript storage
+    await ingestToThreadItems(record);
   } catch (error) {
     console.error('[Ingestor] Failed to ingest message:', error);
+  }
+}
+
+/**
+ * Ingest a message record to the ChatKit-style thread_items table
+ */
+async function ingestToThreadItems(record: DiscordMessageRecord): Promise<void> {
+  try {
+    // Ensure thread exists
+    await getOrCreateThread(record.channelId, record.guildId, {
+      primaryUserId: record.authorId,
+      primaryUsername: record.authorName,
+    });
+
+    const threadId = generateThreadId(record.channelId, record.guildId);
+
+    // Build metadata
+    const metadata: ThreadItemMetadata = {
+      discordMessageId: record.messageId,
+      discordChannelId: record.channelId,
+      discordGuildId: record.guildId || undefined,
+      attachments: record.attachments,
+      replyToMessageId: record.replyToMessageId || undefined,
+      mentionsBot: record.mentionsBot,
+      hasImage: record.hasImage,
+    };
+
+    // Add thread item (idempotent via sourceMessageId)
+    await addThreadItem(threadId, {
+      type: record.isBot ? 'assistant_message' : 'user_message',
+      role: record.isBot ? 'assistant' : 'user',
+      authorId: record.authorId,
+      authorName: record.authorName,
+      content: record.content,
+      metadata,
+      sourceMessageId: record.messageId,
+    });
+
+    // Check if we need to summarize (non-blocking)
+    maybeSummarize(threadId).catch(err =>
+      console.error('[Ingestor] Summarization check failed:', err)
+    );
+  } catch (error) {
+    // Log but don't fail - thread_items is supplementary
+    console.error('[Ingestor] Failed to write to thread_items:', error);
   }
 }
 
@@ -135,10 +195,14 @@ export async function ingestMessageDelete(
 /**
  * Ingest the bot's own outgoing message
  * Important for including bot replies in the transcript
+ * Now also writes to ChatKit-style thread_items table
+ *
+ * @param runId - Optional run ID to associate with this response
  */
 export async function ingestBotMessage(
   message: Message,
-  botUserId: string
+  botUserId: string,
+  runId?: string
 ): Promise<void> {
   if (!sql) return;
 
@@ -161,6 +225,7 @@ export async function ingestBotMessage(
   };
 
   try {
+    // Legacy: Write to discord_messages_recent
     await sql`
       INSERT INTO discord_messages_recent (
         message_id, channel_id, guild_id, author_id, author_name,
@@ -176,8 +241,45 @@ export async function ingestBotMessage(
       )
       ON CONFLICT (message_id) DO NOTHING
     `;
+
+    // ChatKit: Write to thread_items with optional run association
+    await ingestBotResponseToThreadItems(record, runId);
   } catch (error) {
     console.error('[Ingestor] Failed to ingest bot message:', error);
+  }
+}
+
+/**
+ * Ingest a bot response to the ChatKit-style thread_items table
+ */
+async function ingestBotResponseToThreadItems(
+  record: DiscordMessageRecord,
+  runId?: string
+): Promise<void> {
+  try {
+    const threadId = generateThreadId(record.channelId, record.guildId);
+
+    // Build metadata
+    const metadata: ThreadItemMetadata = {
+      discordMessageId: record.messageId,
+      discordChannelId: record.channelId,
+      discordGuildId: record.guildId || undefined,
+      replyToMessageId: record.replyToMessageId || undefined,
+      runId,
+    };
+
+    // Add thread item
+    await addThreadItem(threadId, {
+      type: 'assistant_message',
+      role: 'assistant',
+      authorId: record.authorId,
+      authorName: record.authorName,
+      content: record.content,
+      metadata,
+      sourceMessageId: record.messageId,
+    });
+  } catch (error) {
+    console.error('[Ingestor] Failed to write bot response to thread_items:', error);
   }
 }
 

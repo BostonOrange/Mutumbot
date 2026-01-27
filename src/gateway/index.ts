@@ -19,6 +19,7 @@ import {
   ingestMessageDelete,
   ingestBotMessage,
 } from '../services/messageIngestor';
+import { registerChannelLookup } from '../services/tools';
 
 // Environment variables
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -59,6 +60,28 @@ client.once(Events.ClientReady, async readyClient => {
   // Start message retention cleanup job (runs every hour)
   startRetentionJob();
   console.log('Message retention job started (purges messages older than 4h)');
+
+  // Register channel lookup for AI tools
+  registerChannelLookup(async (guildId: string) => {
+    const guild = readyClient.guilds.cache.get(guildId);
+    if (!guild) {
+      throw new Error(`Guild not found: ${guildId}`);
+    }
+
+    // Fetch channels if not cached
+    const channels = await guild.channels.fetch();
+
+    return Array.from(channels.values())
+      .filter(c => c !== null)
+      .map(channel => ({
+        id: channel!.id,
+        name: channel!.name,
+        type: channel!.isTextBased() ? 'text' as const :
+              channel!.isVoiceBased() ? 'voice' as const :
+              'other' as const,
+      }));
+  });
+  console.log('Channel lookup registered for AI tools');
 
   // Start Friday cron job if party channel is configured
   if (PARTY_CHANNEL_ID) {

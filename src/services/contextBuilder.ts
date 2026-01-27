@@ -9,9 +9,27 @@
  * - Fills remaining slots by recency
  * - Normalizes mentions, links, and attachments
  * - Enforces token/length budgets
+ *
+ * Now also supports ChatKit-style context building with:
+ * - Thread summary at the top for continuity
+ * - thread_items as first-class transcript source
+ * - Deterministic, inspectable context packs with item IDs
  */
 
 import { neon, neonConfig } from '@neondatabase/serverless';
+import {
+  getThread,
+  getThreadItems,
+  generateThreadId,
+  ThreadItem,
+  Thread,
+} from './threads';
+import { formatSummaryForContext, estimateContextSize } from './summarizer';
+import {
+  getThreadWorkflow,
+  ContextPolicy,
+  DEFAULT_CONTEXT_POLICY,
+} from './agents';
 
 neonConfig.fetchConnectionCache = true;
 
@@ -42,6 +60,11 @@ export interface ContextPack {
   triggerMessage: ContextMessage | null;
   channelId: string;
   messageCount: number;
+  // ChatKit enhancements
+  threadId?: string;
+  summary?: string;
+  selectedItemIds?: string[];
+  tokenEstimate?: number;
 }
 
 // ============ CONFIGURATION ============
@@ -392,4 +415,271 @@ export async function hasContext(channelId: string): Promise<boolean> {
   `;
 
   return result.length > 0;
+}
+
+// ============ CHATKIT-STYLE CONTEXT BUILDING ============
+
+/**
+ * Build a ChatKit-style context pack using threads and thread_items
+ *
+ * This provides:
+ * - Thread summary at the top for historical context
+ * - Recent items verbatim
+ * - Deterministic item selection with IDs for debugging
+ * - Token estimation
+ * - Workflow-based context policy (per-channel customization)
+ */
+export async function buildThreadContextPack(
+  channelId: string,
+  guildId: string | null,
+  triggerMessageId?: string
+): Promise<ContextPack | null> {
+  const threadId = generateThreadId(channelId, guildId);
+
+  try {
+    // Get workflow for this thread (or default)
+    const workflow = await getThreadWorkflow(threadId);
+    const policy: ContextPolicy = workflow?.contextPolicy || DEFAULT_CONTEXT_POLICY;
+
+    // Get thread with summary
+    const thread = await getThread(threadId);
+
+    // Get recent thread items using workflow's policy
+    const items = await getThreadItems(threadId, {
+      limit: policy.recentMessages * 2, // Fetch extra for selection
+      types: ['user_message', 'assistant_message'],
+    });
+
+    if (items.length === 0 && !thread?.summary) {
+      // Fall back to legacy context building
+      return triggerMessageId
+        ? buildContextPack(channelId, triggerMessageId)
+        : null;
+    }
+
+    // Convert thread items to ContextMessages for compatibility
+    const contextMessages = threadItemsToContextMessages(items);
+
+    // Find trigger message
+    const triggerMessage = triggerMessageId
+      ? contextMessages.find(m => m.messageId === triggerMessageId) || null
+      : null;
+
+    // Select best messages using workflow's policy
+    const selectedMessages = selectBestMessagesWithPolicy(
+      contextMessages,
+      triggerMessageId || '',
+      policy.recentMessages
+    );
+
+    // Find special messages
+    const replyTarget = triggerMessage
+      ? findReplyTarget(contextMessages, triggerMessage)
+      : null;
+    const lastBotExchange = findLastBotExchange(contextMessages, triggerMessage);
+
+    // Order and format
+    const orderedMessages = orderByTime(selectedMessages);
+
+    // Build transcript with summary at the top (if policy allows)
+    let transcript = '';
+
+    // Add summary if available and policy allows (ChatKit-style continuity)
+    if (thread?.summary && policy.useSummary) {
+      transcript += formatSummaryForContext(thread.summary);
+    }
+
+    // Add recent messages
+    transcript += formatTranscript(orderedMessages);
+
+    // Apply length budget from policy
+    const finalTranscript = applyLengthBudgetWithLimit(transcript, policy.maxTranscriptChars);
+
+    // Collect selected item IDs for debugging/replay
+    const selectedItemIds = items
+      .filter(item =>
+        selectedMessages.some(m =>
+          m.messageId === item.metadata.discordMessageId
+        )
+      )
+      .map(item => item.id);
+
+    // Estimate tokens (rough: ~4 chars per token)
+    const tokenEstimate = Math.ceil(finalTranscript.length / 4);
+
+    return {
+      transcript: finalTranscript,
+      messages: orderedMessages,
+      replyTarget,
+      lastBotExchange,
+      triggerMessage,
+      channelId,
+      messageCount: orderedMessages.length,
+      // ChatKit enhancements
+      threadId,
+      summary: thread?.summary || undefined,
+      selectedItemIds,
+      tokenEstimate,
+    };
+  } catch (error) {
+    console.error('[ContextBuilder] Failed to build thread context:', error);
+    // Fall back to legacy
+    return triggerMessageId
+      ? buildContextPack(channelId, triggerMessageId)
+      : null;
+  }
+}
+
+/**
+ * Select best messages with configurable target count (workflow policy)
+ */
+function selectBestMessagesWithPolicy(
+  candidates: ContextMessage[],
+  triggerMessageId: string,
+  targetCount: number
+): ContextMessage[] {
+  const selected: Map<string, ContextMessage> = new Map();
+
+  // 1. Always include trigger message
+  const trigger = candidates.find(m => m.messageId === triggerMessageId);
+  if (trigger) {
+    selected.set(trigger.messageId, trigger);
+  }
+
+  // 2. If trigger is a reply, include the reply target
+  if (trigger?.replyToMessageId) {
+    const replyTarget = candidates.find(m => m.messageId === trigger.replyToMessageId);
+    if (replyTarget) {
+      selected.set(replyTarget.messageId, replyTarget);
+    }
+  }
+
+  // 3. Include the most recent bot mention + bot reply pair
+  const botMentionIndex = candidates.findIndex(
+    m => m.mentionsBot && !m.isBot && m.messageId !== triggerMessageId
+  );
+  if (botMentionIndex >= 0) {
+    const botMention = candidates[botMentionIndex];
+    selected.set(botMention.messageId, botMention);
+
+    const botReply = candidates.slice(0, botMentionIndex).find(m => m.isBot);
+    if (botReply) {
+      selected.set(botReply.messageId, botReply);
+    }
+  }
+
+  // 4. Fill remaining slots by recency
+  for (const msg of candidates) {
+    if (selected.size >= targetCount) break;
+    if (!selected.has(msg.messageId)) {
+      selected.set(msg.messageId, msg);
+    }
+  }
+
+  return Array.from(selected.values());
+}
+
+/**
+ * Apply length budget with configurable limit (workflow policy)
+ */
+function applyLengthBudgetWithLimit(transcript: string, maxChars: number): string {
+  if (transcript.length <= maxChars) {
+    return transcript;
+  }
+
+  const lines = transcript.split('\n');
+  let result = '';
+  let totalLength = 0;
+
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (totalLength + line.length + 1 > maxChars) {
+      break;
+    }
+    result = line + (result ? '\n' + result : '');
+    totalLength += line.length + 1;
+  }
+
+  return result;
+}
+
+/**
+ * Convert ThreadItems to ContextMessages for compatibility
+ */
+function threadItemsToContextMessages(items: ThreadItem[]): ContextMessage[] {
+  return items.map(item => ({
+    messageId: item.metadata.discordMessageId || item.id,
+    authorId: item.authorId || 'unknown',
+    authorName: item.authorName || (item.role === 'assistant' ? 'Mutumbot' : 'User'),
+    isBot: item.role === 'assistant',
+    createdAt: item.createdAt,
+    content: item.content,
+    mentionsBot: item.metadata.mentionsBot || false,
+    replyToMessageId: item.metadata.replyToMessageId || null,
+    hasImage: item.metadata.hasImage || false,
+    hasAttachments: (item.metadata.attachments?.length || 0) > 0,
+    isDeleted: false,
+  }));
+}
+
+/**
+ * Get thread state for AI context
+ */
+export async function getThreadState(
+  channelId: string,
+  guildId: string | null
+): Promise<{ state: Record<string, unknown>; summary: string | null } | null> {
+  const threadId = generateThreadId(channelId, guildId);
+  const thread = await getThread(threadId);
+
+  if (!thread) return null;
+
+  return {
+    state: thread.state,
+    summary: thread.summary,
+  };
+}
+
+/**
+ * Format thread context for inclusion in system prompt
+ *
+ * Returns a formatted string with:
+ * - Thread state variables
+ * - Rolling summary
+ * - Ready to prepend to recent transcript
+ */
+export function formatThreadContextForPrompt(
+  state: Record<string, unknown> | null,
+  summary: string | null
+): string {
+  let context = '';
+
+  // Add relevant state variables
+  if (state) {
+    const relevantState: string[] = [];
+
+    if (state.primaryUsername) {
+      relevantState.push(`Primary user: ${state.primaryUsername}`);
+    }
+    if (state.isDm) {
+      relevantState.push('Context: Private DM conversation');
+    }
+    if (state.department) {
+      relevantState.push(`Department: ${state.department}`);
+    }
+    if (state.locale) {
+      relevantState.push(`Locale: ${state.locale}`);
+    }
+
+    if (relevantState.length > 0) {
+      context += `[THREAD STATE]\n${relevantState.join('\n')}\n\n`;
+    }
+  }
+
+  // Add summary
+  if (summary) {
+    context += formatSummaryForContext(summary);
+  }
+
+  return context;
 }
