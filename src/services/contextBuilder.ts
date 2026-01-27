@@ -25,6 +25,11 @@ import {
   Thread,
 } from './threads';
 import { formatSummaryForContext, estimateContextSize } from './summarizer';
+import {
+  getThreadWorkflow,
+  ContextPolicy,
+  DEFAULT_CONTEXT_POLICY,
+} from './agents';
 
 neonConfig.fetchConnectionCache = true;
 
@@ -422,6 +427,7 @@ export async function hasContext(channelId: string): Promise<boolean> {
  * - Recent items verbatim
  * - Deterministic item selection with IDs for debugging
  * - Token estimation
+ * - Workflow-based context policy (per-channel customization)
  */
 export async function buildThreadContextPack(
   channelId: string,
@@ -431,12 +437,16 @@ export async function buildThreadContextPack(
   const threadId = generateThreadId(channelId, guildId);
 
   try {
+    // Get workflow for this thread (or default)
+    const workflow = await getThreadWorkflow(threadId);
+    const policy: ContextPolicy = workflow?.contextPolicy || DEFAULT_CONTEXT_POLICY;
+
     // Get thread with summary
     const thread = await getThread(threadId);
 
-    // Get recent thread items
+    // Get recent thread items using workflow's policy
     const items = await getThreadItems(threadId, {
-      limit: CONFIG.CANDIDATE_WINDOW,
+      limit: policy.recentMessages * 2, // Fetch extra for selection
       types: ['user_message', 'assistant_message'],
     });
 
@@ -455,10 +465,11 @@ export async function buildThreadContextPack(
       ? contextMessages.find(m => m.messageId === triggerMessageId) || null
       : null;
 
-    // Select best messages
-    const selectedMessages = selectBestMessages(
+    // Select best messages using workflow's policy
+    const selectedMessages = selectBestMessagesWithPolicy(
       contextMessages,
-      triggerMessageId || ''
+      triggerMessageId || '',
+      policy.recentMessages
     );
 
     // Find special messages
@@ -470,19 +481,19 @@ export async function buildThreadContextPack(
     // Order and format
     const orderedMessages = orderByTime(selectedMessages);
 
-    // Build transcript with summary at the top
+    // Build transcript with summary at the top (if policy allows)
     let transcript = '';
 
-    // Add summary if available (ChatKit-style continuity)
-    if (thread?.summary) {
+    // Add summary if available and policy allows (ChatKit-style continuity)
+    if (thread?.summary && policy.useSummary) {
       transcript += formatSummaryForContext(thread.summary);
     }
 
     // Add recent messages
     transcript += formatTranscript(orderedMessages);
 
-    // Apply length budget
-    const finalTranscript = applyLengthBudget(transcript);
+    // Apply length budget from policy
+    const finalTranscript = applyLengthBudgetWithLimit(transcript, policy.maxTranscriptChars);
 
     // Collect selected item IDs for debugging/replay
     const selectedItemIds = items
@@ -517,6 +528,79 @@ export async function buildThreadContextPack(
       ? buildContextPack(channelId, triggerMessageId)
       : null;
   }
+}
+
+/**
+ * Select best messages with configurable target count (workflow policy)
+ */
+function selectBestMessagesWithPolicy(
+  candidates: ContextMessage[],
+  triggerMessageId: string,
+  targetCount: number
+): ContextMessage[] {
+  const selected: Map<string, ContextMessage> = new Map();
+
+  // 1. Always include trigger message
+  const trigger = candidates.find(m => m.messageId === triggerMessageId);
+  if (trigger) {
+    selected.set(trigger.messageId, trigger);
+  }
+
+  // 2. If trigger is a reply, include the reply target
+  if (trigger?.replyToMessageId) {
+    const replyTarget = candidates.find(m => m.messageId === trigger.replyToMessageId);
+    if (replyTarget) {
+      selected.set(replyTarget.messageId, replyTarget);
+    }
+  }
+
+  // 3. Include the most recent bot mention + bot reply pair
+  const botMentionIndex = candidates.findIndex(
+    m => m.mentionsBot && !m.isBot && m.messageId !== triggerMessageId
+  );
+  if (botMentionIndex >= 0) {
+    const botMention = candidates[botMentionIndex];
+    selected.set(botMention.messageId, botMention);
+
+    const botReply = candidates.slice(0, botMentionIndex).find(m => m.isBot);
+    if (botReply) {
+      selected.set(botReply.messageId, botReply);
+    }
+  }
+
+  // 4. Fill remaining slots by recency
+  for (const msg of candidates) {
+    if (selected.size >= targetCount) break;
+    if (!selected.has(msg.messageId)) {
+      selected.set(msg.messageId, msg);
+    }
+  }
+
+  return Array.from(selected.values());
+}
+
+/**
+ * Apply length budget with configurable limit (workflow policy)
+ */
+function applyLengthBudgetWithLimit(transcript: string, maxChars: number): string {
+  if (transcript.length <= maxChars) {
+    return transcript;
+  }
+
+  const lines = transcript.split('\n');
+  let result = '';
+  let totalLength = 0;
+
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (totalLength + line.length + 1 > maxChars) {
+      break;
+    }
+    result = line + (result ? '\n' + result : '');
+    totalLength += line.length + 1;
+  }
+
+  return result;
 }
 
 /**

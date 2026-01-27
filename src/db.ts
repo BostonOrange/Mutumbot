@@ -13,6 +13,7 @@
 
 import { neon, neonConfig } from '@neondatabase/serverless';
 import { initializeThreadTables } from './services/threads';
+import { initializeAgentTables } from './services/agents';
 
 // Enable connection pooling for better performance
 neonConfig.fetchConnectionCache = true;
@@ -115,6 +116,9 @@ export async function initializeDatabase(): Promise<void> {
 
     // Initialize ChatKit-style tables (threads, thread_items, runs)
     await initializeThreadTables();
+
+    // Initialize Agent Builder tables (agents, workflows)
+    await initializeAgentTables();
   } catch (error) {
     console.error('Failed to initialize database:', error);
     throw error;

@@ -28,6 +28,10 @@ import {
   hasProcessedTrigger,
   generateThreadId,
 } from './services/threads';
+import {
+  resolveConfigWithDefaults,
+  ResolvedConfig,
+} from './services/agents';
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -40,7 +44,7 @@ const openrouter = OPENROUTER_API_KEY
     })
   : null;
 
-const OPENROUTER_MODEL = 'google/gemini-2.5-flash-lite';
+const DEFAULT_MODEL = 'google/gemini-2.5-flash-lite';
 
 // Tribute scoring system
 export const TRIBUTE_SCORES = {
@@ -132,7 +136,7 @@ async function analyzeImageWithOpenRouter(
   }
 
   const response = await openrouter.chat.completions.create({
-    model: OPENROUTER_MODEL,
+    model: DEFAULT_MODEL,
     messages: [
       {
         role: 'user',
@@ -268,21 +272,23 @@ export async function analyzeImage(
 }
 
 /**
- * Chat with OpenRouter (Gemini 2.5 Flash Lite) with conversation history
+ * Chat with OpenRouter with conversation history
  * Supports both in-memory context and database transcript context
+ * Now uses agent config for model selection and system prompt
  */
 async function chatWithOpenRouter(
   question: string,
   channelId?: string,
   aiContext?: string,
-  transcript?: string
+  transcript?: string,
+  config?: ResolvedConfig
 ): Promise<string | null> {
   if (!openrouter) {
     return null;
   }
 
-  // Build system prompt with optional database context (tribute stats) and transcript
-  let systemPrompt = MUTUMBOT_SYSTEM_PROMPT;
+  // Use configured system prompt or fall back to base
+  let systemPrompt = config?.systemPrompt || MUTUMBOT_SYSTEM_PROMPT;
 
   // Add database context (tribute statistics, leaderboards)
   if (aiContext) {
@@ -314,9 +320,16 @@ async function chatWithOpenRouter(
   // Add the current question
   messages.push({ role: 'user', content: question });
 
+  // Use agent's model or fall back to default
+  const model = config?.agent.model || DEFAULT_MODEL;
+  const params = config?.agent.params || {};
+
   const response = await openrouter.chat.completions.create({
-    model: OPENROUTER_MODEL,
+    model,
     messages,
+    temperature: params.temperature,
+    top_p: params.topP,
+    max_tokens: params.maxTokens,
   });
 
   return response.choices[0]?.message?.content || null;
@@ -325,12 +338,14 @@ async function chatWithOpenRouter(
 /**
  * Chat with OpenAI (with conversation history) - fallback
  * Now supports both in-memory context and database transcript context
+ * Uses agent config for system prompt customization
  */
 async function chatWithOpenAI(
   question: string,
   channelId?: string,
   aiContext?: string,
-  transcript?: string
+  transcript?: string,
+  config?: ResolvedConfig
 ): Promise<string | null> {
   if (!OPENAI_API_KEY) {
     return null;
@@ -338,8 +353,8 @@ async function chatWithOpenAI(
 
   const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-  // Build system prompt with optional database context and transcript
-  let systemPrompt = MUTUMBOT_SYSTEM_PROMPT;
+  // Use configured system prompt or fall back to base
+  let systemPrompt = config?.systemPrompt || MUTUMBOT_SYSTEM_PROMPT;
 
   // Add database context (tribute statistics, leaderboards)
   if (aiContext) {
@@ -447,14 +462,26 @@ export async function handleDrinkQuestion(
     }
   }
 
+  // Resolve agent/workflow config for this thread
+  const threadId = channelId ? generateThreadId(channelId, guildId ?? null) : null;
+  let config: ResolvedConfig | undefined;
+  try {
+    config = await resolveConfigWithDefaults(threadId, MUTUMBOT_SYSTEM_PROMPT);
+    if (config.agent.name !== 'Fallback Agent') {
+      console.log(`[Agent] Using agent: ${config.agent.name}, model: ${config.agent.model}`);
+    }
+  } catch (error) {
+    console.error('[Agent] Failed to resolve config:', error);
+    // Continue with default behavior
+  }
+
   // Start run logging
   let runId: string | undefined;
-  if (channelId) {
+  if (channelId && threadId) {
     try {
-      const threadId = generateThreadId(channelId, guildId ?? null);
       runId = await startRun(threadId, {
         provider: OPENROUTER_API_KEY ? 'openrouter' : 'openai',
-        model: OPENROUTER_API_KEY ? OPENROUTER_MODEL : 'gpt-5-nano-2025-08-07',
+        model: config?.agent.model || DEFAULT_MODEL,
         selectedItemIds: contextPack?.selectedItemIds,
         tokenEstimate: contextPack?.tokenEstimate,
       });
@@ -467,13 +494,13 @@ export async function handleDrinkQuestion(
   let response: string | null = null;
   let providerUsed: string | null = null;
 
-  // Try OpenRouter first (Gemini 2.5 Flash Lite)
+  // Try OpenRouter first
   if (OPENROUTER_API_KEY) {
     try {
-      response = await chatWithOpenRouter(question, channelId, aiContext, transcript);
+      response = await chatWithOpenRouter(question, channelId, aiContext, transcript, config);
       if (response) {
         providerUsed = 'openrouter';
-        console.log('Chat handled by OpenRouter (Gemini 2.5 Flash Lite)');
+        console.log(`Chat handled by OpenRouter (${config?.agent.model || DEFAULT_MODEL})`);
       }
     } catch (error) {
       console.error('OpenRouter chat failed, trying OpenAI fallback:', error);
@@ -483,7 +510,7 @@ export async function handleDrinkQuestion(
   // Fallback to OpenAI
   if (!response && OPENAI_API_KEY) {
     try {
-      response = await chatWithOpenAI(question, channelId, aiContext, transcript);
+      response = await chatWithOpenAI(question, channelId, aiContext, transcript, config);
       if (response) {
         providerUsed = 'openai';
         console.log('Chat handled by OpenAI (fallback)');
@@ -586,7 +613,7 @@ async function generateWithOpenRouter(prompt: string): Promise<string | null> {
   }
 
   const response = await openrouter.chat.completions.create({
-    model: OPENROUTER_MODEL,
+    model: DEFAULT_MODEL,
     messages: [{ role: 'user', content: prompt }],
   });
 
