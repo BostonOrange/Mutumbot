@@ -8,11 +8,12 @@
  * recent channel history.
  */
 
+import * as http from 'http';
 import { Client, GatewayIntentBits, Events, Partials } from 'discord.js';
 import { handleMentionMessage } from './mentionHandler';
-import { startFridayCron, postImmediateDemand } from './fridayCron';
-import { startRetentionJob } from './retentionJob';
-import { initializeDatabase, isDatabaseAvailable } from '../db';
+import { startFridayCron, postImmediateDemand, stopFridayCron } from './fridayCron';
+import { startRetentionJob, stopRetentionJob } from './retentionJob';
+import { initializeDatabase, isDatabaseAvailable, closeDatabase } from '../db';
 import {
   ingestMessageCreate,
   ingestMessageUpdate,
@@ -20,7 +21,7 @@ import {
   ingestBotMessage,
 } from '../services/messageIngestor';
 import { registerChannelLookup } from '../services/tools';
-import { initializeEventScheduler } from './eventScheduler';
+import { initializeEventScheduler, stopEventScheduler } from './eventScheduler';
 
 // Environment variables
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -30,6 +31,13 @@ const POST_DEMAND_ON_STARTUP = process.env.POST_DEMAND_ON_STARTUP === 'true';
 if (!DISCORD_BOT_TOKEN) {
   console.error('Missing DISCORD_BOT_TOKEN environment variable');
   process.exit(1);
+}
+
+if (!process.env.OPENROUTER_API_KEY) {
+  console.warn('WARNING: OPENROUTER_API_KEY not set - AI features will not work');
+}
+if (!process.env.DATABASE_URL) {
+  console.warn('WARNING: DATABASE_URL not set - database features will not work');
 }
 
 // Create Discord client with necessary intents
@@ -52,7 +60,7 @@ client.once(Events.ClientReady, async readyClient => {
   // Initialize database for persistent storage
   try {
     await initializeDatabase();
-    console.log(`Database: ${isDatabaseAvailable() ? 'Connected (Neon DB)' : 'Not available (using in-memory fallback)'}`);
+    console.log(`Database: ${isDatabaseAvailable() ? 'Connected (PostgreSQL)' : 'Not available'}`);
   } catch (error) {
     console.error('Database initialization failed:', error);
     console.log('Continuing with in-memory storage...');
@@ -201,16 +209,55 @@ client.on(Events.Error, error => {
 });
 
 // Graceful shutdown
-process.on('SIGINT', () => {
-  console.log('Received SIGINT, shutting down...');
+let healthServer: ReturnType<typeof http.createServer> | null = null;
+
+async function gracefulShutdown(signal: string): Promise<void> {
+  console.log(`Received ${signal}, shutting down gracefully...`);
+
+  // Stop accepting new work
+  stopFridayCron();
+  stopRetentionJob();
+  stopEventScheduler();
+
+  // Close health check server
+  if (healthServer) {
+    healthServer.close();
+  }
+
+  // Allow in-flight work to drain
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
+  // Close database connections
+  await closeDatabase();
+
+  // Disconnect from Discord
   client.destroy();
+  console.log('Shutdown complete');
   process.exit(0);
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+// Start health check server for Railway
+const PORT = process.env.PORT || 3000;
+healthServer = http.createServer((req, res) => {
+  if (req.url === '/health' || req.url === '/') {
+    if (client.isReady()) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }));
+    } else {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'starting' }));
+    }
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
 });
 
-process.on('SIGTERM', () => {
-  console.log('Received SIGTERM, shutting down...');
-  client.destroy();
-  process.exit(0);
+healthServer.listen(PORT, () => {
+  console.log(`Health check server listening on port ${PORT}`);
 });
 
 // Login to Discord

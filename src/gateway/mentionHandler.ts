@@ -23,6 +23,7 @@ import {
   isFriday,
 } from '../tribute-tracker';
 import { ISEE_EMOJI, getRandomPhrase, NO_TRIBUTES_PHRASES, TRIBUTES_RECEIVED_STATUS } from '../personality';
+import { formatPersonalStats, formatLeaderboard } from '../formatters';
 import { addToContext } from '../services/conversationContext';
 
 // Category labels for context
@@ -243,12 +244,7 @@ async function handlePersonalStatsQuery(userId: string, username: string): Promi
   const rank = allTimeBoard.findIndex(e => e.userId === userId) + 1;
   const rankText = rank > 0 ? `#${rank} of ${allTimeBoard.length}` : 'Unranked';
 
-  return `${ISEE_EMOJI} **${username}**, the spirits reveal your devotion...\n\n` +
-    `**All-Time:** ${stats.allTime.score} pts (${stats.allTime.count} tributes) - ${rankText}\n` +
-    `**Fridays:** ${stats.friday.score} pts (${stats.friday.count} tributes)\n` +
-    `**Today:** ${stats.daily.score} pts (${stats.daily.count} tributes)\n` +
-    `**Private Devotion:** ${stats.private.score} pts (${stats.private.count} DM tributes)\n\n` +
-    `*Scoring: Tiki=10pts, Cocktail=5pts, Beer/Wine=2pts, Other=1pt*`;
+  return formatPersonalStats(username, stats, rankText);
 }
 
 /**
@@ -260,35 +256,5 @@ async function handleLeaderboardQuery(): Promise<string> {
     getDailyLeaderboard(20),
     getFridayLeaderboard(20),
   ]);
-  const allTime = allTimeRaw.slice(0, 10);
-  const daily = dailyRaw.slice(0, 5);
-  const friday = fridayRaw.slice(0, 5);
-
-  let content = `${ISEE_EMOJI} **THE SPIRITS REVEAL THE DEVOTED...**\n\n`;
-
-  if (allTime.length > 0) {
-    content += `**🏆 All-Time Rankings:**\n`;
-    allTime.forEach((entry, i) => {
-      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-      content += `${medal} <@${entry.userId}> - ${entry.score}pts (${entry.count} tributes)\n`;
-    });
-  } else {
-    content += `*No tributes yet... The spirits HUNGER.*\n`;
-  }
-
-  if (daily.length > 0) {
-    content += `\n**📅 Today's Devoted:**\n`;
-    daily.forEach((entry, i) => {
-      content += `${i + 1}. <@${entry.userId}> - ${entry.score}pts\n`;
-    });
-  }
-
-  if (friday.length > 0) {
-    content += `\n**🗿 Friday Champions:**\n`;
-    friday.forEach((entry, i) => {
-      content += `${i + 1}. <@${entry.userId}> - ${entry.score}pts\n`;
-    });
-  }
-
-  return content;
+  return formatLeaderboard(allTimeRaw.slice(0, 10), dailyRaw.slice(0, 5), fridayRaw.slice(0, 5));
 }

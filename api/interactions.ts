@@ -24,10 +24,31 @@ import {
   handleDrinkQuestion,
   handleDrinkList,
   handleRandomDrinkFact,
+  analyzeImage,
 } from '../src/drink-questions';
 import { ISEE_EMOJI, getRandomPhrase, TRIBUTE_DEMAND_PHRASES } from '../src/personality';
+import { formatPersonalStats, formatLeaderboard } from '../src/formatters';
 
 const DISCORD_PUBLIC_KEY = process.env.DISCORD_PUBLIC_KEY || '';
+const DISCORD_APP_ID = process.env.DISCORD_APP_ID || '';
+
+/**
+ * Edit the original deferred response
+ */
+async function editOriginalResponse(
+  interactionToken: string,
+  content: string
+): Promise<void> {
+  const url = `https://discord.com/api/v10/webhooks/${DISCORD_APP_ID}/${interactionToken}/messages/@original`;
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  if (!response.ok) {
+    console.error('Failed to edit response:', response.status, await response.text());
+  }
+}
 
 /**
  * Verify Discord interaction signature
@@ -83,6 +104,36 @@ export default async function handler(
 
   // Handle Application Commands (slash commands)
   if (interaction.type === InteractionType.APPLICATION_COMMAND) {
+    const commandName = interaction.data?.name;
+    const deferredCommands = ['ask', 'drink', 'tribute'];
+
+    // Check if this is a subcommand that needs deferring
+    const subcommand = interaction.data?.options?.[0]?.name;
+    const needsDefer = deferredCommands.includes(commandName || '') &&
+      (commandName === 'ask' ||
+       (commandName === 'drink' && (subcommand === 'ask' || subcommand === 'random')) ||
+       (commandName === 'tribute' && subcommand === 'offer'));
+
+    if (needsDefer) {
+      // Return deferred response immediately
+      res.status(200).json({ type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE });
+
+      // Process async and edit the response
+      try {
+        const response = await handleApplicationCommand(interaction);
+        const content = response.data?.content || 'The spirits have spoken.';
+        await editOriginalResponse(interaction.token, content);
+      } catch (error) {
+        console.error('Deferred command failed:', error);
+        await editOriginalResponse(
+          interaction.token,
+          `${ISEE_EMOJI} The spirits encountered a DISTURBANCE. Try again, mortal.`
+        );
+      }
+      return;
+    }
+
+    // Synchronous commands respond immediately
     const response = await handleApplicationCommand(interaction);
     res.status(200).json(response);
     return;
@@ -117,6 +168,25 @@ async function handleApplicationCommand(
         if (imageOption && interaction.data?.resolved?.attachments) {
           const attachmentId = imageOption.value as string;
           imageUrl = interaction.data.resolved.attachments[attachmentId]?.url;
+        }
+
+        // Try AI image analysis for better scoring
+        if (imageUrl) {
+          try {
+            const analysis = await analyzeImage(imageUrl);
+            if (analysis) {
+              const { handleMentionTribute } = await import('../src/tribute-tracker');
+              const result = await handleMentionTribute(
+                userId, username, guildId, channelId || '', imageUrl, undefined, analysis
+              );
+              return {
+                type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+                data: result,
+              };
+            }
+          } catch (error) {
+            console.error('AI image analysis failed for slash tribute, falling back:', error);
+          }
         }
       }
 
@@ -215,12 +285,7 @@ async function handleApplicationCommand(
         return {
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
           data: {
-            content: `${ISEE_EMOJI} **${username}**, the spirits reveal your devotion...\n\n` +
-              `**All-Time:** ${stats.allTime.score} pts (${stats.allTime.count} tributes) - ${rankText}\n` +
-              `**Fridays:** ${stats.friday.score} pts (${stats.friday.count} tributes)\n` +
-              `**Today:** ${stats.daily.score} pts (${stats.daily.count} tributes)\n` +
-              `**Private Devotion:** ${stats.private.score} pts (${stats.private.count} DM tributes)\n\n` +
-              `*Scoring: Tiki=10pts, Cocktail=5pts, Beer/Wine=2pts, Other=1pt*`,
+            content: formatPersonalStats(username, stats, rankText),
           },
         };
       }
@@ -231,39 +296,10 @@ async function handleApplicationCommand(
           getDailyLeaderboard(20),
           getFridayLeaderboard(20),
         ]);
-        const allTime = allTimeRaw.slice(0, 10);
-        const daily = dailyRaw.slice(0, 5);
-        const friday = fridayRaw.slice(0, 5);
-
-        let content = `${ISEE_EMOJI} **THE SPIRITS REVEAL THE DEVOTED...**\n\n`;
-
-        if (allTime.length > 0) {
-          content += `**🏆 All-Time Rankings:**\n`;
-          allTime.forEach((entry, i) => {
-            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-            content += `${medal} <@${entry.userId}> - ${entry.score}pts (${entry.count} tributes)\n`;
-          });
-        } else {
-          content += `*No tributes yet... The spirits HUNGER.*\n`;
-        }
-
-        if (daily.length > 0) {
-          content += `\n**📅 Today's Devoted:**\n`;
-          daily.forEach((entry, i) => {
-            content += `${i + 1}. <@${entry.userId}> - ${entry.score}pts\n`;
-          });
-        }
-
-        if (friday.length > 0) {
-          content += `\n**🗿 Friday Champions:**\n`;
-          friday.forEach((entry, i) => {
-            content += `${i + 1}. <@${entry.userId}> - ${entry.score}pts\n`;
-          });
-        }
 
         return {
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-          data: { content },
+          data: { content: formatLeaderboard(allTimeRaw.slice(0, 10), dailyRaw.slice(0, 5), fridayRaw.slice(0, 5)) },
         };
       }
 
@@ -272,34 +308,6 @@ async function handleApplicationCommand(
         data: {
           content: `${ISEE_EMOJI} Unknown tally command. Use \`/tally me\` or \`/tally leaderboard\`.`,
         },
-      };
-    }
-
-    // Legacy /beer command
-    case 'beer': {
-      const subcommand = options[0]?.name || 'status';
-      let imageUrl: string | undefined;
-
-      if (subcommand === 'post') {
-        const imageOption = options[0]?.options?.find(opt => opt.name === 'image');
-        if (imageOption && interaction.data?.resolved?.attachments) {
-          const attachmentId = imageOption.value as string;
-          imageUrl = interaction.data.resolved.attachments[attachmentId]?.url;
-        }
-      }
-
-      const subcommandMap: Record<string, string> = {
-        post: 'offer',
-        status: 'status',
-        reminder: 'demand',
-      };
-
-      const mappedSubcommand = subcommandMap[subcommand] || subcommand;
-      const result = await handleTributeCommand(mappedSubcommand, userId, username, guildId, imageUrl);
-
-      return {
-        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-        data: result,
       };
     }
 

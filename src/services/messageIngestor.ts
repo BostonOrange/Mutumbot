@@ -9,7 +9,7 @@
  * transcript storage with full run logging support.
  */
 
-import { neon, neonConfig } from '@neondatabase/serverless';
+import { sql } from '../db';
 import { Message, PartialMessage } from 'discord.js';
 import {
   getOrCreateThread,
@@ -18,11 +18,6 @@ import {
   ThreadItemMetadata,
 } from './threads';
 import { maybeSummarize } from './summarizer';
-
-neonConfig.fetchConnectionCache = true;
-
-const DATABASE_URL = process.env.DATABASE_URL;
-const sql = DATABASE_URL ? neon(DATABASE_URL) : null;
 
 // ============ TYPES ============
 

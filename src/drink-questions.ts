@@ -50,6 +50,31 @@ const openrouter = OPENROUTER_API_KEY
 
 const DEFAULT_MODEL = 'google/gemini-2.5-flash-lite';
 
+/**
+ * Retry wrapper with exponential backoff for OpenRouter calls
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  label: string,
+  maxAttempts: number = 3,
+  baseDelayMs: number = 1000
+): Promise<T> {
+  let lastError: Error | undefined;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error as Error;
+      if (attempt < maxAttempts) {
+        const delay = baseDelayMs * Math.pow(2, attempt - 1);
+        console.warn(`[Retry] ${label} attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms:`, lastError.message);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  throw lastError;
+}
+
 // Tribute scoring system
 export const TRIBUTE_SCORES = {
   TIKI: 10,      // Tiki drinks (Mai Tai, Zombie, Painkiller, etc.)
@@ -201,7 +226,10 @@ export async function analyzeImage(
     // Use OpenRouter for image analysis
     try {
       console.log('Analyzing image with OpenRouter...');
-      const result = await analyzeImageWithOpenRouter(base64, contentType, prompt);
+      const result = await withRetry(
+        () => analyzeImageWithOpenRouter(base64, contentType, prompt),
+        'analyzeImage'
+      );
       if (result) {
         console.log('Image analyzed. Category:', result.category, 'Score:', result.score);
         return result;
@@ -309,7 +337,10 @@ When parsing time requests:
     ? { ...baseParams, tools: tools as any, tool_choice: 'auto' as const }
     : baseParams;
 
-  let response = await openrouter.chat.completions.create(requestParams);
+  let response = await withRetry(
+    () => openrouter.chat.completions.create(requestParams),
+    'chatWithOpenRouter'
+  );
   let message = response.choices[0]?.message;
 
   // Handle tool calls in a loop (max 5 iterations to prevent infinite loops)
@@ -345,12 +376,15 @@ When parsing time requests:
     }
 
     // Make another API call with tool results
-    response = await openrouter.chat.completions.create({
-      ...baseParams,
-      tools: tools.length > 0 ? tools as any : undefined,
-      tool_choice: tools.length > 0 ? 'auto' as const : undefined,
-      messages: messages as any,
-    });
+    response = await withRetry(
+      () => openrouter.chat.completions.create({
+        ...baseParams,
+        tools: tools.length > 0 ? tools as any : undefined,
+        tool_choice: tools.length > 0 ? 'auto' as const : undefined,
+        messages: messages as any,
+      }),
+      'chatWithOpenRouter:toolLoop'
+    );
     message = response.choices[0]?.message;
   }
 
@@ -564,10 +598,13 @@ async function generateWithOpenRouter(prompt: string): Promise<string | null> {
     return null;
   }
 
-  const response = await openrouter.chat.completions.create({
-    model: DEFAULT_MODEL,
-    messages: [{ role: 'user', content: prompt }],
-  });
+  const response = await withRetry(
+    () => openrouter!.chat.completions.create({
+      model: DEFAULT_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+    'generateWithOpenRouter'
+  );
 
   return response.choices[0]?.message?.content || null;
 }

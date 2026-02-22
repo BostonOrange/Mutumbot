@@ -16,7 +16,7 @@
  * - Deterministic, inspectable context packs with item IDs
  */
 
-import { neon, neonConfig } from '@neondatabase/serverless';
+import { sql } from '../db';
 import {
   getThread,
   getThreadItems,
@@ -30,11 +30,6 @@ import {
   ContextPolicy,
   DEFAULT_CONTEXT_POLICY,
 } from './agents';
-
-neonConfig.fetchConnectionCache = true;
-
-const DATABASE_URL = process.env.DATABASE_URL;
-const sql = DATABASE_URL ? neon(DATABASE_URL) : null;
 
 // ============ TYPES ============
 
@@ -234,10 +229,10 @@ function normalizeMessage(message: ContextMessage): ContextMessage {
 
 function selectBestMessages(
   candidates: ContextMessage[],
-  triggerMessageId: string
+  triggerMessageId: string,
+  targetCount: number = CONFIG.TARGET_MESSAGES
 ): ContextMessage[] {
   const selected: Map<string, ContextMessage> = new Map();
-  const targetCount = CONFIG.TARGET_MESSAGES;
 
   // 1. Always include trigger message
   const trigger = candidates.find(m => m.messageId === triggerMessageId);
@@ -311,8 +306,8 @@ function formatTime(date: Date): string {
 
 // ============ STEP E: LENGTH BUDGET ============
 
-function applyLengthBudget(transcript: string): string {
-  if (transcript.length <= CONFIG.MAX_TRANSCRIPT_CHARS) {
+function applyLengthBudget(transcript: string, maxChars: number = CONFIG.MAX_TRANSCRIPT_CHARS): string {
+  if (transcript.length <= maxChars) {
     return transcript;
   }
 
@@ -324,7 +319,7 @@ function applyLengthBudget(transcript: string): string {
   // Work backwards from most recent
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
-    if (totalLength + line.length + 1 > CONFIG.MAX_TRANSCRIPT_CHARS) {
+    if (totalLength + line.length + 1 > maxChars) {
       break;
     }
     result = line + (result ? '\n' + result : '');
@@ -466,7 +461,7 @@ export async function buildThreadContextPack(
       : null;
 
     // Select best messages using workflow's policy
-    const selectedMessages = selectBestMessagesWithPolicy(
+    const selectedMessages = selectBestMessages(
       contextMessages,
       triggerMessageId || '',
       policy.recentMessages
@@ -493,7 +488,7 @@ export async function buildThreadContextPack(
     transcript += formatTranscript(orderedMessages);
 
     // Apply length budget from policy
-    const finalTranscript = applyLengthBudgetWithLimit(transcript, policy.maxTranscriptChars);
+    const finalTranscript = applyLengthBudget(transcript, policy.maxTranscriptChars);
 
     // Collect selected item IDs for debugging/replay
     const selectedItemIds = items
@@ -528,79 +523,6 @@ export async function buildThreadContextPack(
       ? buildContextPack(channelId, triggerMessageId)
       : null;
   }
-}
-
-/**
- * Select best messages with configurable target count (workflow policy)
- */
-function selectBestMessagesWithPolicy(
-  candidates: ContextMessage[],
-  triggerMessageId: string,
-  targetCount: number
-): ContextMessage[] {
-  const selected: Map<string, ContextMessage> = new Map();
-
-  // 1. Always include trigger message
-  const trigger = candidates.find(m => m.messageId === triggerMessageId);
-  if (trigger) {
-    selected.set(trigger.messageId, trigger);
-  }
-
-  // 2. If trigger is a reply, include the reply target
-  if (trigger?.replyToMessageId) {
-    const replyTarget = candidates.find(m => m.messageId === trigger.replyToMessageId);
-    if (replyTarget) {
-      selected.set(replyTarget.messageId, replyTarget);
-    }
-  }
-
-  // 3. Include the most recent bot mention + bot reply pair
-  const botMentionIndex = candidates.findIndex(
-    m => m.mentionsBot && !m.isBot && m.messageId !== triggerMessageId
-  );
-  if (botMentionIndex >= 0) {
-    const botMention = candidates[botMentionIndex];
-    selected.set(botMention.messageId, botMention);
-
-    const botReply = candidates.slice(0, botMentionIndex).find(m => m.isBot);
-    if (botReply) {
-      selected.set(botReply.messageId, botReply);
-    }
-  }
-
-  // 4. Fill remaining slots by recency
-  for (const msg of candidates) {
-    if (selected.size >= targetCount) break;
-    if (!selected.has(msg.messageId)) {
-      selected.set(msg.messageId, msg);
-    }
-  }
-
-  return Array.from(selected.values());
-}
-
-/**
- * Apply length budget with configurable limit (workflow policy)
- */
-function applyLengthBudgetWithLimit(transcript: string, maxChars: number): string {
-  if (transcript.length <= maxChars) {
-    return transcript;
-  }
-
-  const lines = transcript.split('\n');
-  let result = '';
-  let totalLength = 0;
-
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i];
-    if (totalLength + line.length + 1 > maxChars) {
-      break;
-    }
-    result = line + (result ? '\n' + result : '');
-    totalLength += line.length + 1;
-  }
-
-  return result;
 }
 
 /**

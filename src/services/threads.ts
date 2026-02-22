@@ -9,12 +9,7 @@
  * - First-class thread_items storage for full transcript logging
  */
 
-import { neon, neonConfig } from '@neondatabase/serverless';
-
-neonConfig.fetchConnectionCache = true;
-
-const DATABASE_URL = process.env.DATABASE_URL;
-const sql = DATABASE_URL ? neon(DATABASE_URL) : null;
+import { sql } from '../db';
 
 // ============ TYPES ============
 

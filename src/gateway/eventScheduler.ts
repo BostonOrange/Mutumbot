@@ -16,8 +16,11 @@ import {
   SendMessageCallback,
 } from '../services/eventExecutor';
 
-// Map of event ID to cron task
-const scheduledTasks: Map<string, cron.ScheduledTask> = new Map();
+// Map of event ID to cron task and expression
+const scheduledTasks: Map<string, { task: cron.ScheduledTask; cronExpression: string }> = new Map();
+
+// Track events currently executing to prevent overlap
+const runningEvents: Set<string> = new Set();
 
 // Refresh interval (check for new/updated events)
 const REFRESH_INTERVAL_MINUTES = 5;
@@ -62,9 +65,14 @@ async function refreshScheduledEvents(): Promise<void> {
       const existingTask = scheduledTasks.get(event.id);
 
       if (existingTask) {
-        // Check if cron expression changed (would need to reschedule)
-        // For now, we just keep the existing task
-        continue;
+        // Check if cron expression changed
+        if (existingTask.cronExpression === event.cronExpression) {
+          continue;
+        }
+        // Cron changed - stop old task and reschedule
+        console.log(`[EventScheduler] Rescheduling event ${event.name}: cron changed from ${existingTask.cronExpression} to ${event.cronExpression}`);
+        existingTask.task.stop();
+        scheduledTasks.delete(event.id);
       }
 
       // Schedule new event
@@ -72,10 +80,10 @@ async function refreshScheduledEvents(): Promise<void> {
     }
 
     // Remove tasks for events that are no longer active
-    for (const [eventId, task] of scheduledTasks) {
+    for (const [eventId, entry] of scheduledTasks) {
       if (!currentEventIds.has(eventId)) {
         console.log(`[EventScheduler] Removing inactive event: ${eventId}`);
-        task.stop();
+        entry.task.stop();
         scheduledTasks.delete(eventId);
       }
     }
@@ -101,6 +109,11 @@ function scheduleEvent(event: ScheduledEvent): void {
   const task = cron.schedule(
     event.cronExpression,
     async () => {
+      if (runningEvents.has(event.id)) {
+        console.log(`[EventScheduler] Skipping event ${event.name} - still running from previous trigger`);
+        return;
+      }
+      runningEvents.add(event.id);
       console.log(`[EventScheduler] Triggering event: ${event.name}`);
       try {
         const result = await executeEvent(event);
@@ -111,6 +124,8 @@ function scheduleEvent(event: ScheduledEvent): void {
         }
       } catch (error) {
         console.error(`[EventScheduler] Event ${event.name} threw error:`, error);
+      } finally {
+        runningEvents.delete(event.id);
       }
     },
     {
@@ -118,7 +133,7 @@ function scheduleEvent(event: ScheduledEvent): void {
     }
   );
 
-  scheduledTasks.set(event.id, task);
+  scheduledTasks.set(event.id, { task, cronExpression: event.cronExpression });
 }
 
 /**
@@ -151,8 +166,8 @@ export function stopEventScheduler(): void {
   }
 
   // Stop all event tasks
-  for (const [eventId, task] of scheduledTasks) {
-    task.stop();
+  for (const [eventId, entry] of scheduledTasks) {
+    entry.task.stop();
   }
   scheduledTasks.clear();
 

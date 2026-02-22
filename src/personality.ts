@@ -102,15 +102,6 @@ export const TIKI_TRIBUTE_PHRASES = [
 ];
 
 /**
- * Phrases for when it's not Friday
- */
-export const NOT_FRIDAY_PHRASES = [
-  'The ritual time has not yet arrived, eager mortal. Friday is when the spirits DEMAND tribute.',
-  'PATIENCE. The ancient calendar says this is not the day. Return when Friday awakens.',
-  'The spirits slumber until Friday, mortal. Hold your offering until the proper time.',
-];
-
-/**
  * Phrases for status when no tributes yet
  */
 export const NO_TRIBUTES_PHRASES = [

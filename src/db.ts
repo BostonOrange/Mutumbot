@@ -1,7 +1,7 @@
 /**
  * Database Module
  *
- * Persistent storage using Neon DB (serverless Postgres).
+ * Persistent storage using PostgreSQL (via postgresjs).
  * This is the ONLY source of truth - no in-memory fallback.
  * Stores rich tribute data for AI context and memory.
  *
@@ -11,12 +11,9 @@
  * - runs: Idempotency and debugging
  */
 
-import { neon, neonConfig } from '@neondatabase/serverless';
+import postgres from 'postgres';
 import { initializeThreadTables } from './services/threads';
 import { initializeAgentTables } from './services/agents';
-
-// Enable connection pooling for better performance
-neonConfig.fetchConnectionCache = true;
 
 // Get the database URL from environment
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -25,8 +22,14 @@ if (!DATABASE_URL) {
   console.error('CRITICAL: DATABASE_URL not set - database features will not work!');
 }
 
-// Create the SQL client
-const sql = DATABASE_URL ? neon(DATABASE_URL) : null;
+let dbInitialized = false;
+
+// Create the SQL client with connection pooling
+export const sql = DATABASE_URL ? postgres(DATABASE_URL, {
+  max: 10,
+  idle_timeout: 20,
+  connect_timeout: 10,
+}) : null;
 
 /**
  * Check if database is available
@@ -38,7 +41,7 @@ export function isDatabaseAvailable(): boolean {
 /**
  * Ensure database is available, throw if not
  */
-function requireDatabase() {
+export function requireDatabase() {
   if (!sql) {
     throw new Error('Database not configured. Set DATABASE_URL environment variable.');
   }
@@ -46,9 +49,19 @@ function requireDatabase() {
 }
 
 /**
+ * Close database connections gracefully
+ */
+export async function closeDatabase(): Promise<void> {
+  if (sql) {
+    await sql.end();
+  }
+}
+
+/**
  * Initialize database tables (run once on startup)
  */
 export async function initializeDatabase(): Promise<void> {
+  if (dbInitialized) return;
   const db = requireDatabase();
 
   try {
@@ -119,6 +132,8 @@ export async function initializeDatabase(): Promise<void> {
 
     // Initialize Agent Builder tables (agents, workflows)
     await initializeAgentTables();
+
+    dbInitialized = true;
   } catch (error) {
     console.error('Failed to initialize database:', error);
     throw error;
@@ -220,49 +235,40 @@ export async function getUserStats(userId: string): Promise<DetailedUserStats> {
   const today = new Date().toISOString().split('T')[0];
 
   try {
-    // Get all-time public stats
-    const allTimeResult = await db`
-      SELECT COUNT(*) as count, COALESCE(SUM(score), 0) as score
-      FROM tributes WHERE user_id = ${userId} AND is_dm = FALSE
-    `;
-
-    // Get Friday stats
-    const fridayResult = await db`
-      SELECT COUNT(*) as count, COALESCE(SUM(score), 0) as score
-      FROM tributes WHERE user_id = ${userId} AND is_friday = TRUE AND is_dm = FALSE
-    `;
-
-    // Get today's stats
-    const todayResult = await db`
-      SELECT COUNT(*) as count, COALESCE(SUM(score), 0) as score
-      FROM tributes WHERE user_id = ${userId} AND DATE(created_at) = ${today} AND is_dm = FALSE
-    `;
-
-    // Get private (DM) stats
-    const privateResult = await db`
-      SELECT COUNT(*) as count, COALESCE(SUM(score), 0) as score
-      FROM tributes WHERE user_id = ${userId} AND is_dm = TRUE
-    `;
-
-    // Get public stats
-    const publicResult = await db`
-      SELECT COUNT(*) as count, COALESCE(SUM(score), 0) as score
-      FROM tributes WHERE user_id = ${userId} AND is_dm = FALSE
-    `;
-
-    // Get stats by category
-    const categoryResult = await db`
-      SELECT category, COUNT(*) as count, COALESCE(SUM(score), 0) as score
-      FROM tributes WHERE user_id = ${userId}
-      GROUP BY category
-    `;
-
-    // Get last tribute
-    const lastTributeResult = await db`
-      SELECT created_at, category, drink_name, username
-      FROM tributes WHERE user_id = ${userId}
-      ORDER BY created_at DESC LIMIT 1
-    `;
+    const [allTimeResult, fridayResult, todayResult, privateResult, categoryResult, lastTributeResult] = await Promise.all([
+      // Get all-time public stats
+      db`
+        SELECT COUNT(*) as count, COALESCE(SUM(score), 0) as score
+        FROM tributes WHERE user_id = ${userId} AND is_dm = FALSE
+      `,
+      // Get Friday stats
+      db`
+        SELECT COUNT(*) as count, COALESCE(SUM(score), 0) as score
+        FROM tributes WHERE user_id = ${userId} AND is_friday = TRUE AND is_dm = FALSE
+      `,
+      // Get today's stats
+      db`
+        SELECT COUNT(*) as count, COALESCE(SUM(score), 0) as score
+        FROM tributes WHERE user_id = ${userId} AND DATE(created_at) = ${today} AND is_dm = FALSE
+      `,
+      // Get private (DM) stats
+      db`
+        SELECT COUNT(*) as count, COALESCE(SUM(score), 0) as score
+        FROM tributes WHERE user_id = ${userId} AND is_dm = TRUE
+      `,
+      // Get stats by category
+      db`
+        SELECT category, COUNT(*) as count, COALESCE(SUM(score), 0) as score
+        FROM tributes WHERE user_id = ${userId}
+        GROUP BY category
+      `,
+      // Get last tribute
+      db`
+        SELECT created_at, category, drink_name, username
+        FROM tributes WHERE user_id = ${userId}
+        ORDER BY created_at DESC LIMIT 1
+      `,
+    ]);
 
     const categoryStats = {
       tiki: { count: 0, score: 0 },
@@ -286,7 +292,7 @@ export async function getUserStats(userId: string): Promise<DetailedUserStats> {
       fridays: { count: Number(fridayResult[0]?.count || 0), score: Number(fridayResult[0]?.score || 0) },
       today: { count: Number(todayResult[0]?.count || 0), score: Number(todayResult[0]?.score || 0) },
       private: { count: Number(privateResult[0]?.count || 0), score: Number(privateResult[0]?.score || 0) },
-      public: { count: Number(publicResult[0]?.count || 0), score: Number(publicResult[0]?.score || 0) },
+      public: { count: Number(allTimeResult[0]?.count || 0), score: Number(allTimeResult[0]?.score || 0) },
       byCategory: categoryStats,
       lastTribute: lastTributeResult[0] ? {
         date: (lastTributeResult[0].created_at as Date).toISOString(),

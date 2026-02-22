@@ -101,6 +101,33 @@ const commands = [
     name: 'cheers',
     description: 'Raise your vessel to the spirits!',
   },
+  {
+    name: 'tally',
+    description: 'Check tribute scores and rankings',
+    options: [
+      {
+        name: 'me',
+        description: 'View your personal tribute stats',
+        type: 1, // SUB_COMMAND
+      },
+      {
+        name: 'leaderboard',
+        description: 'View the tribute leaderboard',
+        type: 1, // SUB_COMMAND
+      },
+    ],
+  },
+  {
+    name: 'demand',
+    description: 'Invoke the spirits to demand tribute',
+    options: [
+      {
+        name: 'now',
+        description: 'Post an immediate tribute demand',
+        type: 1, // SUB_COMMAND
+      },
+    ],
+  },
 ];
 
 async function registerCommands(): Promise<void> {

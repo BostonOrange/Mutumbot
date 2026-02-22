@@ -57,8 +57,8 @@ export function startRetentionJob(): void {
   }
 
   // Schedule hourly cleanup
-  scheduledTask = cron.schedule(CLEANUP_CRON, () => {
-    runRetentionCleanup();
+  scheduledTask = cron.schedule(CLEANUP_CRON, async () => {
+    await runRetentionCleanup();
   }, {
     timezone: 'UTC',
   });

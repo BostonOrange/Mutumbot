@@ -12,6 +12,8 @@ import { getRandomPhrase, TRIBUTE_DEMAND_PHRASES } from '../personality';
 // Stockholm timezone
 const STOCKHOLM_TZ = 'Europe/Stockholm';
 
+let currentTask: cron.ScheduledTask | null = null;
+
 /**
  * Get a random minute between min and max (inclusive)
  */
@@ -35,7 +37,12 @@ function scheduleFridayDemand(client: Client, channelId: string): void {
   // Friday is day 5
   const cronExpression = `${minute} ${hour} * * 5`;
 
-  cron.schedule(
+  if (currentTask) {
+    currentTask.stop();
+    currentTask = null;
+  }
+
+  currentTask = cron.schedule(
     cronExpression,
     async () => {
       try {
@@ -68,6 +75,17 @@ function scheduleFridayDemand(client: Client, channelId: string): void {
 export function startFridayCron(client: Client, channelId: string): void {
   console.log('Initializing Friday tribute demand scheduler...');
   scheduleFridayDemand(client, channelId);
+}
+
+/**
+ * Stop the Friday cron job
+ */
+export function stopFridayCron(): void {
+  if (currentTask) {
+    currentTask.stop();
+    currentTask = null;
+    console.log('Friday cron stopped');
+  }
 }
 
 /**

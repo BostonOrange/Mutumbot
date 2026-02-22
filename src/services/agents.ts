@@ -13,13 +13,8 @@
  * Everything except safety rules is configurable via the database.
  */
 
-import { neon, neonConfig } from '@neondatabase/serverless';
+import { sql } from '../db';
 import { SAFETY_GUARDRAILS, DEFAULT_MUTUMBOT_PERSONA } from '../personality';
-
-neonConfig.fetchConnectionCache = true;
-
-const DATABASE_URL = process.env.DATABASE_URL;
-const sql = DATABASE_URL ? neon(DATABASE_URL) : null;
 
 // ============ TYPES ============
 
