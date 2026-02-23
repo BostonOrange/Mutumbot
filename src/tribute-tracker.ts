@@ -341,14 +341,28 @@ export async function handleMentionTribute(
   const score = imageAnalysis?.score || 1;
   const category = (imageAnalysis?.category as 'TIKI' | 'COCKTAIL' | 'BEER_WINE' | 'OTHER') || 'OTHER';
 
-  await recordTributePost(
-    { userId, username, guildId, channelId, imageUrl, timestamp: new Date().toISOString() },
-    score,
-    category,
-    imageAnalysis?.drinkName,
-    imageAnalysis?.description,
-    imageAnalysis?.response
-  );
+  let recordFailed = false;
+  try {
+    await recordTributePost(
+      { userId, username, guildId, channelId, imageUrl, timestamp: new Date().toISOString() },
+      score,
+      category,
+      imageAnalysis?.drinkName,
+      imageAnalysis?.description,
+      imageAnalysis?.response
+    );
+  } catch (error) {
+    console.error('Failed to record tribute to database:', error);
+    recordFailed = true;
+  }
+
+  if (recordFailed) {
+    let response = imageAnalysis?.response
+      ? `${ISEE_EMOJI} ${imageAnalysis.response}`
+      : `${ISEE_EMOJI} I SEE your offering, **${username}**...`;
+    response += `\n\n⚠️ **The ancient scrolls failed to record this tribute!** The database spirits are unresponsive. Please try again later — your offering was witnessed but NOT saved.`;
+    return { content: response };
+  }
 
   const allTimeStats = await getAllTimeStats(userId);
 

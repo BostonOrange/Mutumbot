@@ -71,7 +71,10 @@ export type GetChannelsCallback = (guildId: string) => Promise<Array<{
   type: 'text' | 'voice' | 'category' | 'thread' | 'other';
 }>>;
 
+export type GetGuildNameCallback = (guildId: string) => string | undefined;
+
 let getChannelsCallback: GetChannelsCallback | null = null;
+let getGuildNameCallback: GetGuildNameCallback | null = null;
 
 /**
  * Register the channel lookup callback
@@ -80,6 +83,14 @@ let getChannelsCallback: GetChannelsCallback | null = null;
 export function registerChannelLookup(callback: GetChannelsCallback): void {
   getChannelsCallback = callback;
   console.log('[Tools] Channel lookup callback registered');
+}
+
+/**
+ * Register the guild name lookup callback
+ * Called by the gateway on startup
+ */
+export function registerGuildNameLookup(callback: GetGuildNameCallback): void {
+  getGuildNameCallback = callback;
 }
 
 // ============ TOOL DEFINITIONS FOR DISCORD INFO ============
@@ -394,6 +405,21 @@ async function executeCreateScheduledEvent(
   }
 
   try {
+    // Resolve guild and channel names for human-readable storage
+    let guildName: string | undefined;
+    let channelName: string | undefined;
+    const parts = targetThreadId.split(':');
+    if (parts[0] === 'discord' && parts[1] !== 'dm' && parts[1] && parts[2]) {
+      if (getGuildNameCallback) guildName = getGuildNameCallback(parts[1]);
+      if (getChannelsCallback) {
+        try {
+          const channels = await getChannelsCallback(parts[1]);
+          const channel = channels.find(c => c.id === parts[2]);
+          if (channel) channelName = channel.name;
+        } catch { /* best-effort */ }
+      }
+    }
+
     console.log('[Tools] Creating scheduled event:', {
       name: args.name,
       threadId: targetThreadId,
@@ -410,6 +436,8 @@ async function executeCreateScheduledEvent(
       {
         payload,
         timezone: args.timezone || 'Europe/Stockholm',
+        guildName,
+        channelName,
       }
     );
 

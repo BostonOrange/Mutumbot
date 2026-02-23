@@ -73,20 +73,30 @@ export async function handleMentionMessage(message: Message): Promise<Message | 
       const score = imageAnalysis?.score || TRIBUTE_SCORES.OTHER;
       const category = (imageAnalysis?.category as 'TIKI' | 'COCKTAIL' | 'BEER_WINE' | 'OTHER') || 'OTHER';
 
-      await recordTributePost(
-        { userId, username, guildId: 'dm', channelId, imageUrl: imageAttachment.url, timestamp: new Date().toISOString() },
-        score,
-        category,
-        imageAnalysis?.drinkName,
-        imageAnalysis?.description,
-        imageAnalysis?.response
-      );
+      let recordFailed = false;
+      try {
+        await recordTributePost(
+          { userId, username, guildId: 'dm', channelId, imageUrl: imageAttachment.url, timestamp: new Date().toISOString() },
+          score,
+          category,
+          imageAnalysis?.drinkName,
+          imageAnalysis?.description,
+          imageAnalysis?.response
+        );
+      } catch (error) {
+        console.error('Failed to record DM tribute to database:', error);
+        recordFailed = true;
+      }
 
       let dmResponse: string;
       if (imageAnalysis?.response) {
         dmResponse = `${ISEE_EMOJI} ${imageAnalysis.response}`;
       } else {
         dmResponse = `${ISEE_EMOJI} I SEE your private offering, **${username}**... The spirits acknowledge your devotion.`;
+      }
+
+      if (recordFailed) {
+        dmResponse += `\n\n⚠️ **The ancient scrolls failed to record this tribute!** The database spirits are unresponsive. Please try again later — your offering was witnessed but NOT saved.`;
       }
 
       const reply = await message.reply(dmResponse);

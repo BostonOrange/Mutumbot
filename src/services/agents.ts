@@ -111,6 +111,10 @@ export interface ScheduledEvent {
   description: string | null;
   /** Target thread/channel (discord:guild:channel format) */
   threadId: string;
+  /** Human-readable guild/server name */
+  guildName: string | null;
+  /** Human-readable channel name */
+  channelName: string | null;
   /** Cron expression (e.g., "0 17 * * 5" for Friday 5pm) */
   cronExpression: string;
   /** Type of event to trigger */
@@ -308,6 +312,8 @@ export async function initializeAgentTables(): Promise<void> {
         name VARCHAR(100) NOT NULL,
         description TEXT,
         thread_id VARCHAR(200) NOT NULL,
+        guild_name VARCHAR(200),
+        channel_name VARCHAR(200),
         cron_expression VARCHAR(100) NOT NULL,
         event_type VARCHAR(50) NOT NULL,
         payload JSONB DEFAULT '{}',
@@ -844,6 +850,8 @@ function rowToScheduledEvent(row: Record<string, unknown>): ScheduledEvent {
     name: row.name as string,
     description: row.description as string | null,
     threadId: row.thread_id as string,
+    guildName: (row.guild_name as string) || null,
+    channelName: (row.channel_name as string) || null,
     cronExpression: row.cron_expression as string,
     eventType: row.event_type as EventType,
     payload: (row.payload as ScheduledEventPayload) || {},
@@ -918,16 +926,20 @@ export async function createScheduledEvent(
     description?: string;
     payload?: ScheduledEventPayload;
     timezone?: string;
+    guildName?: string;
+    channelName?: string;
   } = {}
 ): Promise<ScheduledEvent> {
   if (!sql) throw new Error('Database not available');
 
   const result = await sql`
-    INSERT INTO scheduled_events (name, description, thread_id, cron_expression, event_type, payload, timezone)
+    INSERT INTO scheduled_events (name, description, thread_id, guild_name, channel_name, cron_expression, event_type, payload, timezone)
     VALUES (
       ${name},
       ${options.description || null},
       ${threadId},
+      ${options.guildName || null},
+      ${options.channelName || null},
       ${cronExpression},
       ${eventType},
       ${JSON.stringify(options.payload || {})},

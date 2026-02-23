@@ -20,7 +20,7 @@ import {
   ingestMessageDelete,
   ingestBotMessage,
 } from '../services/messageIngestor';
-import { registerChannelLookup } from '../services/tools';
+import { registerChannelLookup, registerGuildNameLookup } from '../services/tools';
 import { initializeEventScheduler, stopEventScheduler } from './eventScheduler';
 
 // Environment variables
@@ -70,7 +70,11 @@ client.once(Events.ClientReady, async readyClient => {
   startRetentionJob();
   console.log('Message retention job started (purges messages older than 4h)');
 
-  // Register channel lookup for AI tools
+  // Register guild and channel lookups for AI tools
+  registerGuildNameLookup((guildId: string) => {
+    return readyClient.guilds.cache.get(guildId)?.name;
+  });
+
   registerChannelLookup(async (guildId: string) => {
     const guild = readyClient.guilds.cache.get(guildId);
     if (!guild) {
