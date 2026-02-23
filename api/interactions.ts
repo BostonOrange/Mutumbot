@@ -276,8 +276,8 @@ async function handleApplicationCommand(
 
       if (subcommand === 'me') {
         const [stats, allTimeBoard] = await Promise.all([
-          getFullUserStats(userId),
-          getAllTimeLeaderboard(50),
+          getFullUserStats(userId, guildId),
+          getAllTimeLeaderboard(50, guildId),
         ]);
         const rank = allTimeBoard.findIndex(e => e.userId === userId) + 1;
         const rankText = rank > 0 ? `#${rank} of ${allTimeBoard.length}` : 'Unranked';
@@ -292,9 +292,9 @@ async function handleApplicationCommand(
 
       if (subcommand === 'leaderboard') {
         const [allTimeRaw, dailyRaw, fridayRaw] = await Promise.all([
-          getAllTimeLeaderboard(50),
-          getDailyLeaderboard(20),
-          getFridayLeaderboard(20),
+          getAllTimeLeaderboard(50, guildId),
+          getDailyLeaderboard(20, guildId),
+          getFridayLeaderboard(20, guildId),
         ]);
 
         return {

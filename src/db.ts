@@ -230,7 +230,7 @@ export async function recordTribute(tribute: Omit<TributeRecord, 'id' | 'created
 /**
  * Get comprehensive stats for a user
  */
-export async function getUserStats(userId: string): Promise<DetailedUserStats> {
+export async function getUserStats(userId: string, guildId?: string): Promise<DetailedUserStats> {
   const db = requireDatabase();
   const today = new Date().toISOString().split('T')[0];
 
@@ -240,16 +240,19 @@ export async function getUserStats(userId: string): Promise<DetailedUserStats> {
       db`
         SELECT COUNT(*) as count, COALESCE(SUM(score), 0) as score
         FROM tributes WHERE user_id = ${userId} AND is_dm = FALSE
+        ${guildId ? db`AND guild_id = ${guildId}` : db``}
       `,
       // Get Friday stats
       db`
         SELECT COUNT(*) as count, COALESCE(SUM(score), 0) as score
         FROM tributes WHERE user_id = ${userId} AND is_friday = TRUE AND is_dm = FALSE
+        ${guildId ? db`AND guild_id = ${guildId}` : db``}
       `,
       // Get today's stats
       db`
         SELECT COUNT(*) as count, COALESCE(SUM(score), 0) as score
         FROM tributes WHERE user_id = ${userId} AND DATE(created_at) = ${today} AND is_dm = FALSE
+        ${guildId ? db`AND guild_id = ${guildId}` : db``}
       `,
       // Get private (DM) stats
       db`
@@ -260,12 +263,14 @@ export async function getUserStats(userId: string): Promise<DetailedUserStats> {
       db`
         SELECT category, COUNT(*) as count, COALESCE(SUM(score), 0) as score
         FROM tributes WHERE user_id = ${userId}
+        ${guildId ? db`AND guild_id = ${guildId}` : db``}
         GROUP BY category
       `,
       // Get last tribute
       db`
         SELECT created_at, category, drink_name, username
         FROM tributes WHERE user_id = ${userId}
+        ${guildId ? db`AND guild_id = ${guildId}` : db``}
         ORDER BY created_at DESC LIMIT 1
       `,
     ]);
@@ -309,12 +314,13 @@ export async function getUserStats(userId: string): Promise<DetailedUserStats> {
 /**
  * Get simple all-time stats for a user
  */
-export async function getAllTimeStats(userId: string): Promise<UserStats> {
+export async function getAllTimeStats(userId: string, guildId?: string): Promise<UserStats> {
   const db = requireDatabase();
 
   const result = await db`
     SELECT COUNT(*) as count, COALESCE(SUM(score), 0) as score
     FROM tributes WHERE user_id = ${userId} AND is_dm = FALSE
+    ${guildId ? db`AND guild_id = ${guildId}` : db``}
   `;
 
   return {
@@ -326,12 +332,13 @@ export async function getAllTimeStats(userId: string): Promise<UserStats> {
 /**
  * Get Friday stats for a user
  */
-export async function getFridayStats(userId: string): Promise<UserStats> {
+export async function getFridayStats(userId: string, guildId?: string): Promise<UserStats> {
   const db = requireDatabase();
 
   const result = await db`
     SELECT COUNT(*) as count, COALESCE(SUM(score), 0) as score
     FROM tributes WHERE user_id = ${userId} AND is_friday = TRUE AND is_dm = FALSE
+    ${guildId ? db`AND guild_id = ${guildId}` : db``}
   `;
 
   return {
@@ -343,13 +350,14 @@ export async function getFridayStats(userId: string): Promise<UserStats> {
 /**
  * Get today's stats for a user
  */
-export async function getDailyStats(userId: string): Promise<UserStats> {
+export async function getDailyStats(userId: string, guildId?: string): Promise<UserStats> {
   const db = requireDatabase();
   const today = new Date().toISOString().split('T')[0];
 
   const result = await db`
     SELECT COUNT(*) as count, COALESCE(SUM(score), 0) as score
     FROM tributes WHERE user_id = ${userId} AND DATE(created_at) = ${today} AND is_dm = FALSE
+    ${guildId ? db`AND guild_id = ${guildId}` : db``}
   `;
 
   return {
@@ -380,12 +388,13 @@ export async function getPrivateStats(userId: string): Promise<UserStats> {
 /**
  * Get all-time leaderboard
  */
-export async function getAllTimeLeaderboard(limit: number = 50): Promise<LeaderboardEntry[]> {
+export async function getAllTimeLeaderboard(limit: number = 50, guildId?: string): Promise<LeaderboardEntry[]> {
   const db = requireDatabase();
 
   const result = await db`
     SELECT user_id, MAX(username) as username, COUNT(*) as count, SUM(score) as score
     FROM tributes WHERE is_dm = FALSE
+    ${guildId ? db`AND guild_id = ${guildId}` : db``}
     GROUP BY user_id
     ORDER BY score DESC
     LIMIT ${limit}
@@ -402,13 +411,14 @@ export async function getAllTimeLeaderboard(limit: number = 50): Promise<Leaderb
 /**
  * Get today's leaderboard
  */
-export async function getDailyLeaderboard(limit: number = 20): Promise<LeaderboardEntry[]> {
+export async function getDailyLeaderboard(limit: number = 20, guildId?: string): Promise<LeaderboardEntry[]> {
   const db = requireDatabase();
   const today = new Date().toISOString().split('T')[0];
 
   const result = await db`
     SELECT user_id, MAX(username) as username, COUNT(*) as count, SUM(score) as score
     FROM tributes WHERE is_dm = FALSE AND DATE(created_at) = ${today}
+    ${guildId ? db`AND guild_id = ${guildId}` : db``}
     GROUP BY user_id
     ORDER BY score DESC
     LIMIT ${limit}
@@ -425,12 +435,13 @@ export async function getDailyLeaderboard(limit: number = 20): Promise<Leaderboa
 /**
  * Get Friday leaderboard (all Fridays)
  */
-export async function getFridayLeaderboard(limit: number = 20): Promise<LeaderboardEntry[]> {
+export async function getFridayLeaderboard(limit: number = 20, guildId?: string): Promise<LeaderboardEntry[]> {
   const db = requireDatabase();
 
   const result = await db`
     SELECT user_id, MAX(username) as username, COUNT(*) as count, SUM(score) as score
     FROM tributes WHERE is_dm = FALSE AND is_friday = TRUE
+    ${guildId ? db`AND guild_id = ${guildId}` : db``}
     GROUP BY user_id
     ORDER BY score DESC
     LIMIT ${limit}
@@ -542,7 +553,7 @@ export async function hasUserOfferedTribute(userId: string, guildId: string): Pr
 /**
  * Get recent tributes for AI context (rich data for memory)
  */
-export async function getRecentTributes(limit: number = 20): Promise<TributeRecord[]> {
+export async function getRecentTributes(limit: number = 20, guildId?: string): Promise<TributeRecord[]> {
   const db = requireDatabase();
 
   const result = await db`
@@ -550,6 +561,7 @@ export async function getRecentTributes(limit: number = 20): Promise<TributeReco
            image_url, category, drink_name, description, ai_response,
            score, friday_key, is_friday, created_at
     FROM tributes
+    ${guildId ? db`WHERE guild_id = ${guildId}` : db``}
     ORDER BY created_at DESC
     LIMIT ${limit}
   `;
@@ -744,13 +756,13 @@ export function formatTributeHistoryForAI(tributes: TributeRecord[]): string {
 /**
  * Get comprehensive AI context for a user interaction
  */
-export async function getAIContext(userId: string, channelId?: string): Promise<string> {
+export async function getAIContext(userId: string, channelId?: string, guildId?: string): Promise<string> {
   const [userStats, allTime, daily, friday, recentTributes, userHistory] = await Promise.all([
-    getUserStats(userId),
-    getAllTimeLeaderboard(10),
-    getDailyLeaderboard(5),
-    getFridayLeaderboard(5),
-    getRecentTributes(10),
+    getUserStats(userId, guildId),
+    getAllTimeLeaderboard(10, guildId),
+    getDailyLeaderboard(5, guildId),
+    getFridayLeaderboard(5, guildId),
+    getRecentTributes(10, guildId),
     getUserTributeHistory(userId, 5),
   ]);
 

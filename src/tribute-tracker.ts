@@ -110,16 +110,16 @@ export interface TributeStatsResult {
 /**
  * Get full user stats
  */
-export async function getFullUserStats(userId: string): Promise<{
+export async function getFullUserStats(userId: string, guildId?: string): Promise<{
   allTime: TributeStatsResult;
   daily: TributeStatsResult;
   friday: TributeStatsResult;
   private: TributeStatsResult;
 }> {
   const [allTime, daily, friday, privateStats] = await Promise.all([
-    getAllTimeStats(userId),
-    getDailyStats(userId),
-    getFridayStats(userId),
+    getAllTimeStats(userId, guildId),
+    getDailyStats(userId, guildId),
+    getFridayStats(userId, guildId),
     getPrivateStats(userId),
   ]);
 
@@ -134,11 +134,11 @@ export async function getFullUserStats(userId: string): Promise<{
 /**
  * Format leaderboard for AI context
  */
-export async function getLeaderboardContext(): Promise<string> {
+export async function getLeaderboardContext(guildId?: string): Promise<string> {
   const [allTime, daily, friday] = await Promise.all([
-    getAllTimeLeaderboard(10),
-    getDailyLeaderboard(5),
-    getFridayLeaderboard(5),
+    getAllTimeLeaderboard(10, guildId),
+    getDailyLeaderboard(5, guildId),
+    getFridayLeaderboard(5, guildId),
   ]);
 
   return formatLeaderboardForAI(allTime, daily, friday);
@@ -163,10 +163,10 @@ const CONDEMNATION_PHRASES = [
 /**
  * Maybe generate random praise or condemnation (30% chance)
  */
-async function maybeGetRandomComment(): Promise<string | null> {
+async function maybeGetRandomComment(guildId?: string): Promise<string | null> {
   if (Math.random() > 0.3) return null;
 
-  const leaderboard = await getAllTimeLeaderboard(10);
+  const leaderboard = await getAllTimeLeaderboard(10, guildId);
   if (leaderboard.length < 2) return null;
 
   if (Math.random() < 0.6) {
@@ -233,7 +233,7 @@ export async function handleTributeCommand(
         category
       );
 
-      const stats = await getFullUserStats(userId);
+      const stats = await getFullUserStats(userId, guildId);
       const isSpecialDay = isFriday();
 
       let response: string;
@@ -256,7 +256,7 @@ export async function handleTributeCommand(
         response += `\n*Today: ${stats.daily.count} | All-time: ${stats.allTime.count}*`;
       }
 
-      const randomComment = await maybeGetRandomComment();
+      const randomComment = await maybeGetRandomComment(guildId);
       if (randomComment) {
         response += `\n\n${randomComment}`;
       }
@@ -277,15 +277,15 @@ export async function handleTributeCommand(
       }
 
       const devoteePromises = status.posts.map(async p => {
-        const stats = await getAllTimeStats(p.userId);
-        const fridayS = await getFridayStats(p.userId);
+        const stats = await getAllTimeStats(p.userId, guildId);
+        const fridayS = await getFridayStats(p.userId, guildId);
         return `  - ${p.username} (${stats.score}pts from ${stats.count} tributes | Fridays: ${fridayS.score}pts)`;
       });
       const devotees = (await Promise.all(devoteePromises)).join('\n');
 
       let response = `${getRandomPhrase(TRIBUTES_RECEIVED_STATUS)}\n\n**${fridayLabel}**: ${status.posts.length} offering${status.posts.length !== 1 ? 's' : ''} recorded.\n\n**Devoted mortals:**\n${devotees}`;
 
-      const leaderboard = await getAllTimeLeaderboard(5);
+      const leaderboard = await getAllTimeLeaderboard(5, guildId);
       if (leaderboard.length > 0) {
         const top = leaderboard[0];
         response += `\n\n${ISEE_EMOJI} **Most devoted:** <@${top.userId}> with ${top.score}pts from ${top.count} tributes`;
@@ -364,7 +364,7 @@ export async function handleMentionTribute(
     return { content: response };
   }
 
-  const allTimeStats = await getAllTimeStats(userId);
+  const allTimeStats = await getAllTimeStats(userId, guildId);
 
   let response: string;
   if (imageAnalysis?.response) {
@@ -373,7 +373,7 @@ export async function handleMentionTribute(
     response = `${ISEE_EMOJI} I SEE your offering, **${username}**... The spirits acknowledge your tribute.`;
   }
 
-  const randomComment = await maybeGetRandomComment();
+  const randomComment = await maybeGetRandomComment(guildId);
   if (randomComment) {
     response += `\n\n${randomComment}`;
   }

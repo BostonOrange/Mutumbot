@@ -130,21 +130,21 @@ export async function handleMentionMessage(message: Message): Promise<Message | 
 
   // Check for personal stats query
   if (isPersonalStatsQuery(cleanedContent)) {
-    const statsResponse = await handlePersonalStatsQuery(userId, username);
+    const statsResponse = await handlePersonalStatsQuery(userId, username, guildId);
     const reply = await message.reply(statsResponse);
     return reply;
   }
 
   // Check for leaderboard query
   if (isLeaderboardQuery(cleanedContent)) {
-    const leaderboardResponse = await handleLeaderboardQuery();
+    const leaderboardResponse = await handleLeaderboardQuery(guildId);
     const reply = await message.reply(leaderboardResponse);
     return reply;
   }
 
   // General question/conversation - only include database context if question relates to tributes/data
   const aiContext = needsTributeContext(cleanedContent)
-    ? await getAIContext(userId, channelId)
+    ? await getAIContext(userId, channelId, guildId)
     : undefined;
 
   // Pass message ID and guild ID for ChatKit-style context building
@@ -225,8 +225,8 @@ async function handleStatusQuery(userId: string, username: string, guildId: stri
 
   const devoteePromises = status.posts.map(async p => {
     const [stats, fridayS] = await Promise.all([
-      getFullUserStats(p.userId),
-      getFridayStats(p.userId),
+      getFullUserStats(p.userId, guildId),
+      getFridayStats(p.userId, guildId),
     ]);
     return `  - ${p.username} (${stats.allTime.score}pts from ${stats.allTime.count} tributes | Fridays: ${fridayS.score}pts)`;
   });
@@ -234,7 +234,7 @@ async function handleStatusQuery(userId: string, username: string, guildId: stri
 
   let response = `${getRandomPhrase(TRIBUTES_RECEIVED_STATUS)}\n\n**${fridayLabel}**: ${status.posts.length} offering${status.posts.length !== 1 ? 's' : ''} recorded.\n\n**Devoted mortals:**\n${devotees}`;
 
-  const leaderboard = await getAllTimeLeaderboard(5);
+  const leaderboard = await getAllTimeLeaderboard(5, guildId);
   if (leaderboard.length > 0) {
     const top = leaderboard[0];
     response += `\n\n${ISEE_EMOJI} **Most devoted:** <@${top.userId}> with ${top.score}pts from ${top.count} tributes`;
@@ -246,10 +246,10 @@ async function handleStatusQuery(userId: string, username: string, guildId: stri
 /**
  * Handle personal stats query
  */
-async function handlePersonalStatsQuery(userId: string, username: string): Promise<string> {
+async function handlePersonalStatsQuery(userId: string, username: string, guildId: string): Promise<string> {
   const [stats, allTimeBoard] = await Promise.all([
-    getFullUserStats(userId),
-    getAllTimeLeaderboard(50),
+    getFullUserStats(userId, guildId),
+    getAllTimeLeaderboard(50, guildId),
   ]);
   const rank = allTimeBoard.findIndex(e => e.userId === userId) + 1;
   const rankText = rank > 0 ? `#${rank} of ${allTimeBoard.length}` : 'Unranked';
@@ -260,11 +260,11 @@ async function handlePersonalStatsQuery(userId: string, username: string): Promi
 /**
  * Handle leaderboard query
  */
-async function handleLeaderboardQuery(): Promise<string> {
+async function handleLeaderboardQuery(guildId: string): Promise<string> {
   const [allTimeRaw, dailyRaw, fridayRaw] = await Promise.all([
-    getAllTimeLeaderboard(50),
-    getDailyLeaderboard(20),
-    getFridayLeaderboard(20),
+    getAllTimeLeaderboard(50, guildId),
+    getDailyLeaderboard(20, guildId),
+    getFridayLeaderboard(20, guildId),
   ]);
   return formatLeaderboard(allTimeRaw.slice(0, 10), dailyRaw.slice(0, 5), fridayRaw.slice(0, 5));
 }
