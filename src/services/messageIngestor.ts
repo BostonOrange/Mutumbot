@@ -2,7 +2,7 @@
  * Message Ingestor Service
  *
  * Captures Discord events (message create/update/delete) and stores them
- * in Neon DB for building LLM context. Implements idempotent writes
+ * in PostgreSQL for building LLM context. Implements idempotent writes
  * with proper handling of edits, deletes, replies, and attachments.
  *
  * Now also writes to the ChatKit-style thread_items table for first-class

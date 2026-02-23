@@ -32,7 +32,7 @@ src/gateway/fridayCron.ts      Friday auto-tribute cron (random 15:00-18:00 Stoc
 src/gateway/eventScheduler.ts  Cron manager for DB-configured scheduled events
 src/gateway/retentionJob.ts    Periodic DB cleanup (purge old messages, thread items, runs)
 src/drink-questions.ts       Core AI handler: OpenRouter calls, tool-call loop, image analysis
-src/db.ts                    All raw SQL queries (Neon serverless Postgres, no ORM)
+src/db.ts                    All raw SQL queries (Railway Postgres via postgresjs, no ORM)
 src/personality.ts           Persona phrases, SAFETY_GUARDRAILS, emoji constants
 src/tribute-tracker.ts       Thin facade over db.ts for tribute formatting
 ```
@@ -55,14 +55,14 @@ src/tribute-tracker.ts       Thin facade over db.ts for tribute formatting
 ```
 Discord Event → Gateway/Vercel Handler → Service Layer → OpenRouter AI → Discord Response
                                                 ↕
-                                          Neon Postgres (db.ts)
+                                          Railway Postgres (db.ts)
 ```
 
 ## Key Patterns
 
 - **Dual entry points**: Slash commands via Vercel HTTP webhook; @mentions/DMs via Railway discord.js Gateway. They share the same service layer but run independently.
 - **AI Provider**: OpenRouter only (`openai` npm package pointed at `https://openrouter.ai/api/v1`). Default model: `google/gemini-2.5-flash-lite`.
-- **Database**: Neon serverless Postgres with raw SQL via tagged template literals (`sql\`...\``). No ORM. Tables auto-created in `initializeDatabase()`.
+- **Database**: Railway Postgres via `postgresjs` with raw SQL tagged template literals (`sql\`...\``). No ORM. Tables auto-created in `initializeDatabase()`.
 - **Safety guardrails**: `SAFETY_GUARDRAILS` in `personality.ts` is always prepended to every AI system prompt — never overridden by DB agent config. Enforced in `agents.ts:composeSystemPrompt()`.
 - **Idempotency**: Message ingestion uses `ON CONFLICT DO NOTHING/UPDATE`; `hasProcessedTrigger()` prevents duplicate AI runs; thread items check `source_message_id`.
 - **Thread IDs**: Format is `discord:{guildId}:{channelId}` for guild channels, `discord:dm:{channelId}` for DMs.

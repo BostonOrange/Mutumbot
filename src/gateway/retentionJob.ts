@@ -7,7 +7,7 @@
  * - Purges old runs after 24 hours (keep for debugging)
  * - Caps messages per channel to prevent spam dominance
  *
- * This keeps the Neon DB lean and fast while maintaining
+ * This keeps the database lean and fast while maintaining
  * rolling summaries for conversation continuity.
  */
 

@@ -2,7 +2,7 @@
  * Tribute Tracker
  *
  * Wrapper around database functions for tribute tracking.
- * All data is stored in Neon DB - no in-memory fallback.
+ * All data is stored in PostgreSQL - no in-memory fallback.
  */
 
 import {
