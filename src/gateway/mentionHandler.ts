@@ -42,7 +42,7 @@ export async function handleMentionMessage(message: Message): Promise<Message | 
   const guildId = message.guild?.id || 'dm';
   const channelId = message.channel.id;
   const userId = message.author.id;
-  const username = message.author.username;
+  const username = message.member?.displayName || message.author.displayName || message.author.username;
   const isDM = !message.guild;
 
   // Check for image attachments
