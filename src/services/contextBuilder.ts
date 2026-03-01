@@ -66,15 +66,15 @@ export interface ContextPack {
 
 const CONFIG = {
   // How many messages to fetch as candidates
-  CANDIDATE_WINDOW: 50,
+  CANDIDATE_WINDOW: 100,
   // How many messages to select for transcript
-  TARGET_MESSAGES: 15,
+  TARGET_MESSAGES: 20,
   // Max characters per message content
-  MAX_CONTENT_LENGTH: 300,
+  MAX_CONTENT_LENGTH: 400,
   // Max total transcript characters
-  MAX_TRANSCRIPT_CHARS: 8000,
+  MAX_TRANSCRIPT_CHARS: 10000,
   // Max age of messages to consider (in hours)
-  MAX_MESSAGE_AGE_HOURS: 4,
+  MAX_MESSAGE_AGE_HOURS: 8,
 };
 
 // ============ MAIN CONTEXT BUILDER ============
