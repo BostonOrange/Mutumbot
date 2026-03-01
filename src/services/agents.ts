@@ -196,10 +196,10 @@ const DEFAULT_AGENT_PARAMS: AgentParams = {
 };
 
 const DEFAULT_CONTEXT_POLICY: ContextPolicy = {
-  recentMessages: 15,
-  maxAgeHours: 4,
+  recentMessages: 20,
+  maxAgeHours: 8,
   useSummary: true,
-  maxTranscriptChars: 8000,
+  maxTranscriptChars: 10000,
   includeTributeContext: true,
 };
 
@@ -353,15 +353,15 @@ async function ensureDefaults(): Promise<void> {
   `;
 
   let defaultAgentId: string;
+  const defaultCapabilities = ['image_analysis', 'tribute_tracking', 'scheduled_messages'];
 
   if (existingAgent.length === 0) {
-    // Create default agent with the tiki persona (stored in DB, not hardcoded)
-    const defaultCapabilities = ['image_analysis', 'tribute_tracking', 'scheduled_messages'];
+    // Create default agent with the sensei persona (stored in DB, not hardcoded)
     const result = await sql`
       INSERT INTO agents (name, description, system_prompt, custom_instructions, capabilities, model, params, is_default)
       VALUES (
-        'Mutumbot Default',
-        'The ancient tiki entity persona - can be replaced by creating a new default agent',
+        'Sensei Mutum',
+        'Wise sensei with anime waifu energy — the default Mutumbot persona',
         ${DEFAULT_MUTUMBOT_PERSONA},
         NULL,
         ${JSON.stringify(defaultCapabilities)},
@@ -372,9 +372,25 @@ async function ensureDefaults(): Promise<void> {
       RETURNING id
     `;
     defaultAgentId = result[0].id as string;
-    console.log('[Agents] Created default agent with tiki persona:', defaultAgentId);
+    console.log('[Agents] Created default agent with sensei persona:', defaultAgentId);
   } else {
     defaultAgentId = existingAgent[0].id as string;
+    // Migrate the default agent to the new sensei persona unless it has already been
+    // set up as "Sensei Mutum". This covers the old tiki "Mutumbot Default" persona,
+    // any custom interim persona (e.g. "space traveler"), and other outdated defaults.
+    const agentRow = await sql`SELECT name FROM agents WHERE id = ${defaultAgentId}`;
+    const agentName = agentRow[0]?.name as string | undefined;
+    if (agentName !== 'Sensei Mutum') {
+      await sql`
+        UPDATE agents SET
+          name = 'Sensei Mutum',
+          description = 'Wise sensei with anime waifu energy — the default Mutumbot persona',
+          system_prompt = ${DEFAULT_MUTUMBOT_PERSONA},
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ${defaultAgentId}
+      `;
+      console.log('[Agents] Migrated default agent to sensei persona (was:', agentName + '):', defaultAgentId);
+    }
   }
 
   // Check if default workflow exists
@@ -396,6 +412,22 @@ async function ensureDefaults(): Promise<void> {
       RETURNING id
     `;
     console.log('[Agents] Created default workflow:', result[0].id);
+  } else {
+    // Only update the context policy if it still uses the old default values
+    // (recentMessages: 15, maxAgeHours: 4) — don't overwrite admin customizations
+    const workflowRow = await sql`
+      SELECT context_policy FROM workflows WHERE is_default = TRUE LIMIT 1
+    `;
+    const policy = workflowRow[0]?.context_policy as { recentMessages?: number; maxAgeHours?: number } | undefined;
+    if (policy && policy.recentMessages === 15 && policy.maxAgeHours === 4) {
+      await sql`
+        UPDATE workflows SET
+          context_policy = ${JSON.stringify(DEFAULT_CONTEXT_POLICY)},
+          updated_at = CURRENT_TIMESTAMP
+        WHERE is_default = TRUE
+      `;
+      console.log('[Agents] Migrated default workflow to updated context policy');
+    }
   }
 }
 

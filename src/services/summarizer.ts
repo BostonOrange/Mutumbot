@@ -36,15 +36,15 @@ const SUMMARIZATION_MODEL = 'google/gemini-2.5-flash-lite';
 
 const CONFIG = {
   // Number of recent items to keep verbatim
-  VERBATIM_ITEM_COUNT: 30,
+  VERBATIM_ITEM_COUNT: 50,
   // Maximum characters before triggering summarization
-  MAX_CONTEXT_CHARS: 6000,
+  MAX_CONTEXT_CHARS: 8000,
   // Minimum items before considering summarization
-  MIN_ITEMS_FOR_SUMMARY: 40,
+  MIN_ITEMS_FOR_SUMMARY: 60,
   // How often to check for summarization (every N new items)
   SUMMARIZATION_CHECK_INTERVAL: 10,
   // Maximum summary length
-  MAX_SUMMARY_CHARS: 2000,
+  MAX_SUMMARY_CHARS: 3000,
 };
 
 // ============ SUMMARIZATION ============

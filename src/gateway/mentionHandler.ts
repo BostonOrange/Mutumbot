@@ -25,6 +25,7 @@ import {
 import { ISEE_EMOJI, getRandomPhrase, NO_TRIBUTES_PHRASES, TRIBUTES_RECEIVED_STATUS } from '../personality';
 import { formatPersonalStats, formatLeaderboard } from '../formatters';
 import { addToContext } from '../services/conversationContext';
+import { maybeUpdateUserMemory } from '../services/userMemory';
 
 // Category labels for context
 const CATEGORY_LABELS: Record<string, string> = {
@@ -147,8 +148,11 @@ export async function handleMentionMessage(message: Message): Promise<Message | 
     ? await getAIContext(userId, channelId, guildId)
     : undefined;
 
-  // Pass message ID and guild ID for ChatKit-style context building
-  const response = await handleMention(message.content, channelId, aiContext, message.id, guildId);
+  // Trigger user memory update in background (non-blocking)
+  maybeUpdateUserMemory(userId, username, channelId, isDM ? null : (message.guild?.id || null)).catch(() => {});
+
+  // Pass message ID, guild ID, userId, and username for full context building
+  const response = await handleMention(message.content, channelId, aiContext, message.id, guildId, userId, username);
 
   // Skip if empty response (idempotency - already processed)
   if (!response.content) {
