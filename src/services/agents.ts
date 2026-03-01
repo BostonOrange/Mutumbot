@@ -375,11 +375,12 @@ async function ensureDefaults(): Promise<void> {
     console.log('[Agents] Created default agent with sensei persona:', defaultAgentId);
   } else {
     defaultAgentId = existingAgent[0].id as string;
-    // Only auto-update the persona if the agent still has the old tiki default name —
-    // if an admin has renamed or customized it, leave it alone.
+    // Migrate the default agent to the new sensei persona unless it has already been
+    // set up as "Sensei Mutum". This covers the old tiki "Mutumbot Default" persona,
+    // any custom interim persona (e.g. "space traveler"), and other outdated defaults.
     const agentRow = await sql`SELECT name FROM agents WHERE id = ${defaultAgentId}`;
     const agentName = agentRow[0]?.name as string | undefined;
-    if (agentName === 'Mutumbot Default') {
+    if (agentName !== 'Sensei Mutum') {
       await sql`
         UPDATE agents SET
           name = 'Sensei Mutum',
@@ -388,7 +389,7 @@ async function ensureDefaults(): Promise<void> {
           updated_at = CURRENT_TIMESTAMP
         WHERE id = ${defaultAgentId}
       `;
-      console.log('[Agents] Migrated default agent from tiki to sensei persona:', defaultAgentId);
+      console.log('[Agents] Migrated default agent to sensei persona (was:', agentName + '):', defaultAgentId);
     }
   }
 
