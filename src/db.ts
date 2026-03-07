@@ -15,6 +15,7 @@ import postgres from 'postgres';
 import { initializeThreadTables } from './services/threads';
 import { initializeAgentTables } from './services/agents';
 import { initializeUserMemoryTable } from './services/userMemory';
+import { initializeAgentKnowledgeTable } from './services/agentKnowledge';
 
 // Get the database URL from environment
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -136,6 +137,9 @@ export async function initializeDatabase(): Promise<void> {
 
     // Initialize per-user memory table
     await initializeUserMemoryTable();
+
+    // Initialize agent knowledge table
+    await initializeAgentKnowledgeTable();
 
     dbInitialized = true;
   } catch (error) {

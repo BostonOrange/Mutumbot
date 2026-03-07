@@ -15,6 +15,7 @@ import {
   EVENT_TYPES,
   AVAILABLE_CAPABILITIES,
 } from './agents';
+import { rememberFact, recallFacts } from './agentKnowledge';
 
 // ============ TOOL DEFINITIONS ============
 
@@ -228,6 +229,63 @@ export const SCHEDULING_TOOLS: ToolDefinition[] = [
   },
 ];
 
+// ============ KNOWLEDGE TOOLS ============
+
+export const KNOWLEDGE_TOOLS: ToolDefinition[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'remember_fact',
+      description: 'Save a fact to your persistent memory. Use this automatically when you learn something worth remembering: user preferences, opinions, recurring topics, venue details, drink recipes, or any useful information. Facts persist across conversations and channels.',
+      parameters: {
+        type: 'object',
+        properties: {
+          fact: {
+            type: 'string',
+            description: 'The fact to remember. Be concise but specific.',
+          },
+          category: {
+            type: 'string',
+            description: 'Category for organizing facts',
+            enum: ['user_preference', 'drink_knowledge', 'venue_info', 'event_info', 'general', 'opinion', 'recipe'],
+          },
+          subject: {
+            type: 'string',
+            description: 'Who or what this fact is about (e.g., a username, drink name, place name)',
+          },
+        },
+        required: ['fact'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'recall_facts',
+      description: 'Search your persistent memory for stored facts. Use this when you need specific knowledge about a person, topic, or category that might not be in your auto-loaded context.',
+      parameters: {
+        type: 'object',
+        properties: {
+          subject: {
+            type: 'string',
+            description: 'Search by subject (who/what the fact is about)',
+          },
+          category: {
+            type: 'string',
+            description: 'Filter by category',
+            enum: ['user_preference', 'drink_knowledge', 'venue_info', 'event_info', 'general', 'opinion', 'recipe'],
+          },
+          search_text: {
+            type: 'string',
+            description: 'Free-text search across all facts',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+];
+
 // ============ TOOL EXECUTION ============
 
 /**
@@ -244,6 +302,11 @@ export function getToolsForCapabilities(capabilities: string[]): ToolDefinition[
     tools.push(...SCHEDULING_TOOLS);
   }
 
+  // Knowledge tools require 'knowledge' capability
+  if (capabilities.includes(AVAILABLE_CAPABILITIES.KNOWLEDGE)) {
+    tools.push(...KNOWLEDGE_TOOLS);
+  }
+
   return tools;
 }
 
@@ -253,7 +316,8 @@ export function getToolsForCapabilities(capabilities: string[]): ToolDefinition[
 export async function executeTool(
   toolCall: ToolCall,
   threadId: string,
-  capabilities: string[]
+  capabilities: string[],
+  agentId?: string
 ): Promise<ToolResult> {
   const { name, arguments: argsJson } = toolCall.function;
 
@@ -280,6 +344,14 @@ export async function executeTool(
 
       case 'update_scheduled_event':
         result = await executeUpdateScheduledEvent(args, threadId);
+        break;
+
+      case 'remember_fact':
+        result = await executeRememberFact(args, threadId, agentId);
+        break;
+
+      case 'recall_facts':
+        result = await executeRecallFacts(args, agentId);
         break;
 
       default:
@@ -620,6 +692,72 @@ async function executeUpdateScheduledEvent(
   } catch (error) {
     return JSON.stringify({
       error: `Failed to update event: ${(error as Error).message}`,
+    });
+  }
+}
+
+// ============ KNOWLEDGE TOOL IMPLEMENTATIONS ============
+
+async function executeRememberFact(
+  args: { fact: string; category?: string; subject?: string },
+  threadId: string,
+  agentId?: string
+): Promise<string> {
+  if (!agentId) {
+    return JSON.stringify({ error: 'No agent context — cannot save facts' });
+  }
+
+  try {
+    const fact = await rememberFact(agentId, args.fact, {
+      category: args.category,
+      subject: args.subject,
+      sourceThreadId: threadId,
+    });
+
+    return JSON.stringify({
+      success: true,
+      message: `Remembered: ${args.fact.slice(0, 100)}${args.fact.length > 100 ? '...' : ''}`,
+      fact_id: fact.id,
+    });
+  } catch (error) {
+    return JSON.stringify({
+      error: `Failed to save fact: ${(error as Error).message}`,
+    });
+  }
+}
+
+async function executeRecallFacts(
+  args: { subject?: string; category?: string; search_text?: string },
+  agentId?: string
+): Promise<string> {
+  if (!agentId) {
+    return JSON.stringify({ error: 'No agent context — cannot recall facts' });
+  }
+
+  try {
+    const facts = await recallFacts(agentId, {
+      subject: args.subject,
+      category: args.category,
+      searchText: args.search_text,
+    });
+
+    if (facts.length === 0) {
+      return JSON.stringify({ message: 'No matching facts found', facts: [] });
+    }
+
+    return JSON.stringify({
+      message: `Found ${facts.length} fact(s)`,
+      facts: facts.map(f => ({
+        id: f.id,
+        fact: f.fact,
+        category: f.category,
+        subject: f.subject,
+        updated: f.updatedAt.toISOString(),
+      })),
+    });
+  } catch (error) {
+    return JSON.stringify({
+      error: `Failed to recall facts: ${(error as Error).message}`,
     });
   }
 }

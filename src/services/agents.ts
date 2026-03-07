@@ -82,6 +82,9 @@ export const AVAILABLE_CAPABILITIES = {
   // Moderation
   CONTENT_MODERATION: 'content_moderation', // Flag inappropriate content
 
+  // Knowledge
+  KNOWLEDGE: 'knowledge',                 // Persistent fact memory per agent
+
   // Integration
   EXTERNAL_API: 'external_api',           // Call external APIs (future)
 } as const;
