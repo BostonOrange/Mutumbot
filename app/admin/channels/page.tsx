@@ -1,0 +1,549 @@
+'use client';
+
+// Usage: /admin/channels
+// Displays all threads with a workflow assigned, allows updating or removing assignments,
+// and provides a form to assign a workflow to a new thread ID.
+
+import { useState, useEffect, useCallback } from 'react';
+
+interface ChannelRow {
+  thread_id: string;
+  workflow_id: string;
+  workflow_name: string;
+  agent_name: string;
+}
+
+interface Workflow {
+  id: string;
+  name: string;
+  isDefault?: boolean;
+}
+
+type ActionStatus = { type: 'success' | 'error'; message: string; threadId: string } | null;
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function formatThreadId(threadId: string): string {
+  // discord:guildId:channelId → show channelId
+  // discord:dm:channelId → show "DM: channelId"
+  const parts = threadId.split(':');
+  if (parts.length === 3 && parts[0] === 'discord') {
+    if (parts[1] === 'dm') return `DM: ${parts[2]}`;
+    return parts[2];
+  }
+  return threadId;
+}
+
+function formatThreadIdFull(threadId: string): string {
+  const parts = threadId.split(':');
+  if (parts.length === 3 && parts[0] === 'discord') {
+    if (parts[1] === 'dm') return `DM channel ${parts[2]}`;
+    return `Guild ${parts[1]}, channel ${parts[2]}`;
+  }
+  return threadId;
+}
+
+// ─── Shared style constants ───────────────────────────────────────────────────
+
+const INPUT_CLASS =
+  'w-full rounded-md bg-gray-800 border border-gray-700 text-gray-100 px-3 py-2 text-sm placeholder-gray-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-colors';
+
+const SELECT_CLASS = `${INPUT_CLASS} cursor-pointer`;
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function StatusBanner({ status, onDismiss }: { status: ActionStatus; onDismiss: () => void }) {
+  if (!status) return null;
+  const isSuccess = status.type === 'success';
+  return (
+    <div
+      className={`flex items-center justify-between rounded-md border px-4 py-3 text-sm ${
+        isSuccess
+          ? 'bg-green-900/40 border-green-700 text-green-300'
+          : 'bg-red-900/40 border-red-700 text-red-300'
+      }`}
+    >
+      <span>{status.message}</span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="ml-4 shrink-0 text-xs opacity-60 hover:opacity-100 transition-opacity"
+        aria-label="Dismiss"
+      >
+        Dismiss
+      </button>
+    </div>
+  );
+}
+
+function WorkflowSelect({
+  id,
+  value,
+  workflows,
+  onChange,
+  disabled,
+}: {
+  id: string;
+  value: string;
+  workflows: Workflow[];
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  if (workflows.length === 0) {
+    return <span className="text-xs text-gray-500 italic">No workflows</span>;
+  }
+  return (
+    <select
+      id={id}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={disabled}
+      className={SELECT_CLASS}
+      aria-label="Select workflow"
+    >
+      {workflows.map((wf) => (
+        <option key={wf.id} value={wf.id}>
+          {wf.name}
+          {wf.isDefault ? ' (default)' : ''}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+// ─── Assigned channels table row ──────────────────────────────────────────────
+
+function AssignedRow({
+  row,
+  workflows,
+  onUpdate,
+  actionStatus,
+}: {
+  row: ChannelRow;
+  workflows: Workflow[];
+  onUpdate: (threadId: string, workflowId: string, resetHistory: boolean) => Promise<void>;
+  actionStatus: ActionStatus;
+}) {
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState(row.workflow_id);
+  const [resetHistory, setResetHistory] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const isDirty = selectedWorkflowId !== row.workflow_id || resetHistory;
+  const isThisRowStatus = actionStatus?.threadId === row.thread_id;
+
+  async function handleUpdate() {
+    setSaving(true);
+    await onUpdate(row.thread_id, selectedWorkflowId, resetHistory);
+    setResetHistory(false);
+    setSaving(false);
+  }
+
+  return (
+    <tr className="border-b border-gray-800 last:border-0">
+      {/* Thread ID */}
+      <td className="py-3 px-4 align-top">
+        <span
+          className="block text-sm font-mono text-gray-100 truncate max-w-[140px]"
+          title={formatThreadIdFull(row.thread_id)}
+        >
+          {formatThreadId(row.thread_id)}
+        </span>
+        <span className="block text-xs text-gray-500 mt-0.5 font-mono truncate max-w-[140px]">
+          {row.thread_id}
+        </span>
+      </td>
+
+      {/* Agent */}
+      <td className="py-3 px-4 align-top">
+        <span className="text-sm text-gray-300">{row.agent_name ?? '—'}</span>
+      </td>
+
+      {/* Workflow dropdown */}
+      <td className="py-3 px-4 align-top min-w-[180px]">
+        <WorkflowSelect
+          id={`wf-${row.thread_id}`}
+          value={selectedWorkflowId}
+          workflows={workflows}
+          onChange={setSelectedWorkflowId}
+          disabled={saving}
+        />
+      </td>
+
+      {/* Reset history */}
+      <td className="py-3 px-4 align-top whitespace-nowrap">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={resetHistory}
+            onChange={(e) => setResetHistory(e.target.checked)}
+            disabled={saving}
+            className="accent-amber-500 h-4 w-4 cursor-pointer"
+            aria-label="Reset conversation history"
+          />
+          <span className="text-xs text-gray-400">Reset history</span>
+        </label>
+        {isThisRowStatus && (
+          <p
+            className={`text-xs mt-1 ${
+              actionStatus?.type === 'success' ? 'text-green-400' : 'text-red-400'
+            }`}
+          >
+            {actionStatus?.message}
+          </p>
+        )}
+      </td>
+
+      {/* Update button */}
+      <td className="py-3 px-4 align-top">
+        <button
+          type="button"
+          disabled={saving || !isDirty}
+          onClick={handleUpdate}
+          className="rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 text-xs font-semibold text-white transition-colors whitespace-nowrap"
+        >
+          {saving ? 'Saving...' : 'Update'}
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+// ─── Assign new channel form ──────────────────────────────────────────────────
+
+function AssignNewForm({
+  workflows,
+  onAssign,
+  status,
+}: {
+  workflows: Workflow[];
+  onAssign: (threadId: string, workflowId: string, resetHistory: boolean) => Promise<void>;
+  status: ActionStatus;
+}) {
+  const defaultWorkflowId = workflows.find((w) => w.isDefault)?.id ?? workflows[0]?.id ?? '';
+
+  const [threadId, setThreadId] = useState('');
+  const [workflowId, setWorkflowId] = useState(defaultWorkflowId);
+  const [resetHistory, setResetHistory] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  // Keep default in sync when workflows first load
+  useEffect(() => {
+    if (!workflowId && defaultWorkflowId) {
+      setWorkflowId(defaultWorkflowId);
+    }
+  }, [defaultWorkflowId, workflowId]);
+
+  const isNewFormStatus = status?.threadId === '__new__';
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLocalError(null);
+
+    const trimmed = threadId.trim();
+    if (!trimmed) {
+      setLocalError('Thread ID is required.');
+      return;
+    }
+    if (!workflowId) {
+      setLocalError('Select a workflow.');
+      return;
+    }
+
+    setSaving(true);
+    await onAssign(trimmed, workflowId, resetHistory);
+    setSaving(false);
+
+    // Only clear the form on success
+    if (status?.type !== 'error') {
+      setThreadId('');
+      setResetHistory(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} noValidate>
+      <div className="space-y-4">
+        {localError && (
+          <p className="text-sm text-red-400">{localError}</p>
+        )}
+        {isNewFormStatus && (
+          <p
+            className={`text-sm ${
+              status?.type === 'success' ? 'text-green-400' : 'text-red-400'
+            }`}
+          >
+            {status?.message}
+          </p>
+        )}
+
+        {/* Thread ID */}
+        <div>
+          <label htmlFor="new-thread-id" className="block text-sm font-medium text-gray-300 mb-1.5">
+            Thread ID <span className="text-red-400">*</span>
+          </label>
+          <input
+            id="new-thread-id"
+            type="text"
+            value={threadId}
+            onChange={(e) => setThreadId(e.target.value)}
+            placeholder="discord:guildId:channelId"
+            disabled={saving}
+            className={INPUT_CLASS}
+            aria-describedby="thread-id-hint"
+          />
+          <p id="thread-id-hint" className="mt-1 text-xs text-gray-500">
+            Format: <code className="font-mono">discord:guildId:channelId</code> or{' '}
+            <code className="font-mono">discord:dm:channelId</code>
+          </p>
+        </div>
+
+        {/* Workflow */}
+        <div>
+          <label htmlFor="new-workflow-id" className="block text-sm font-medium text-gray-300 mb-1.5">
+            Workflow <span className="text-red-400">*</span>
+          </label>
+          <WorkflowSelect
+            id="new-workflow-id"
+            value={workflowId}
+            workflows={workflows}
+            onChange={setWorkflowId}
+            disabled={saving}
+          />
+        </div>
+
+        {/* Reset history */}
+        <label className="flex items-start gap-3 cursor-pointer group">
+          <input
+            type="checkbox"
+            checked={resetHistory}
+            onChange={(e) => setResetHistory(e.target.checked)}
+            disabled={saving}
+            className="mt-0.5 accent-amber-500 shrink-0 h-4 w-4 cursor-pointer"
+          />
+          <span>
+            <span className="block text-sm font-medium text-gray-300 group-hover:text-gray-200 transition-colors">
+              Reset Conversation History
+            </span>
+            <span className="block text-xs text-gray-500 mt-0.5">
+              Clears the existing thread history when assigning this workflow.
+            </span>
+          </span>
+        </label>
+
+        <div className="pt-1">
+          <button
+            type="submit"
+            disabled={saving || workflows.length === 0}
+            className="rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed px-5 py-2 text-sm font-semibold text-white transition-colors"
+          >
+            {saving ? 'Assigning...' : 'Assign'}
+          </button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+export default function ChannelsPage() {
+  const [channels, setChannels] = useState<ChannelRow[]>([]);
+  const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionStatus, setActionStatus] = useState<ActionStatus>(null);
+
+  const fetchData = useCallback(async () => {
+    setLoadError(null);
+    try {
+      const [channelsRes, workflowsRes] = await Promise.all([
+        fetch('/api/admin/channels'),
+        fetch('/api/admin/workflows'),
+      ]);
+
+      if (!channelsRes.ok || !workflowsRes.ok) {
+        throw new Error('Failed to load data from the server.');
+      }
+
+      const [channelsData, workflowsData] = await Promise.all([
+        channelsRes.json(),
+        workflowsRes.json(),
+      ]);
+
+      setChannels(Array.isArray(channelsData) ? channelsData : []);
+      setWorkflows(Array.isArray(workflowsData) ? workflowsData : []);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Unexpected error loading data.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  async function handleAssign(
+    threadId: string,
+    workflowId: string,
+    resetHistory: boolean,
+    isNew = false,
+  ) {
+    setActionStatus(null);
+    try {
+      const res = await fetch('/api/admin/channels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threadId, workflowId, resetHistory }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Request failed with status ${res.status}`);
+      }
+
+      const workflowName = workflows.find((w) => w.id === workflowId)?.name ?? workflowId;
+      setActionStatus({
+        type: 'success',
+        message: `Workflow "${workflowName}" assigned successfully.`,
+        threadId: isNew ? '__new__' : threadId,
+      });
+
+      // Refresh the list so the table stays consistent
+      await fetchData();
+    } catch (err) {
+      setActionStatus({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'An unexpected error occurred.',
+        threadId: isNew ? '__new__' : threadId,
+      });
+    }
+  }
+
+  return (
+    <div>
+      {/* Header */}
+      <div className="mb-8">
+        <h2 className="text-2xl font-bold text-gray-100">Channel Assignments</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          Map Discord threads to workflows. The assigned workflow controls which AI agent and context
+          policy applies when the bot responds in that channel.
+        </p>
+      </div>
+
+      {/* Global status banner (for row-level updates) */}
+      {actionStatus && actionStatus.threadId !== '__new__' && (
+        <div className="mb-6">
+          <StatusBanner status={actionStatus} onDismiss={() => setActionStatus(null)} />
+        </div>
+      )}
+
+      {/* Load error */}
+      {loadError && (
+        <div className="mb-6 rounded-md bg-red-900/40 border border-red-700 px-4 py-3 text-sm text-red-300">
+          {loadError}
+        </div>
+      )}
+
+      {/* ── Assigned Channels Table ── */}
+      <section aria-labelledby="assigned-heading" className="mb-10">
+        <h3
+          id="assigned-heading"
+          className="text-base font-semibold text-gray-200 mb-4"
+        >
+          Assigned Channels
+        </h3>
+
+        {loading ? (
+          <div className="rounded-lg border border-gray-800 bg-gray-900 px-6 py-10 text-center">
+            <p className="text-sm text-gray-500">Loading...</p>
+          </div>
+        ) : channels.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-gray-700 px-8 py-16 text-center">
+            <p className="text-sm font-medium text-gray-400">No channels assigned</p>
+            <p className="mt-1 text-xs text-gray-600">
+              Use the form below to assign a workflow to a channel.
+            </p>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-gray-800 overflow-x-auto">
+            <table className="w-full text-left" aria-label="Assigned channels">
+              <thead>
+                <tr className="border-b border-gray-700 bg-gray-900/60">
+                  <th
+                    scope="col"
+                    className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500"
+                  >
+                    Channel
+                  </th>
+                  <th
+                    scope="col"
+                    className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500"
+                  >
+                    Agent
+                  </th>
+                  <th
+                    scope="col"
+                    className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500"
+                  >
+                    Workflow
+                  </th>
+                  <th
+                    scope="col"
+                    className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500"
+                  >
+                    Options
+                  </th>
+                  <th
+                    scope="col"
+                    className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500"
+                  >
+                    {/* Actions column — no heading text */}
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-gray-900 divide-y divide-gray-800">
+                {channels.map((row) => (
+                  <AssignedRow
+                    key={row.thread_id}
+                    row={row}
+                    workflows={workflows}
+                    onUpdate={(tid, wid, reset) => handleAssign(tid, wid, reset, false)}
+                    actionStatus={actionStatus}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* ── Assign New Channel ── */}
+      <section aria-labelledby="assign-new-heading">
+        <div className="max-w-lg rounded-lg border border-gray-800 bg-gray-900 p-6">
+          <h3
+            id="assign-new-heading"
+            className="text-base font-semibold text-gray-200 mb-1"
+          >
+            Assign New Channel
+          </h3>
+          <p className="text-xs text-gray-500 mb-5">
+            Enter a thread ID to connect it to a workflow. If the channel is already assigned, this
+            will update its workflow.
+          </p>
+
+          {loading ? (
+            <p className="text-sm text-gray-500">Loading workflows...</p>
+          ) : (
+            <AssignNewForm
+              workflows={workflows}
+              onAssign={(tid, wid, reset) => handleAssign(tid, wid, reset, true)}
+              status={actionStatus?.threadId === '__new__' ? actionStatus : null}
+            />
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
