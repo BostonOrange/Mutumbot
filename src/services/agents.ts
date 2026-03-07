@@ -357,7 +357,7 @@ async function ensureDefaults(): Promise<void> {
   `;
 
   let defaultAgentId: string;
-  const defaultCapabilities = ['image_analysis', 'tribute_tracking', 'scheduled_messages'];
+  const defaultCapabilities = ['image_analysis', 'tribute_tracking', 'scheduled_messages', 'knowledge'];
 
   if (existingAgent.length === 0) {
     // Create default agent with the sensei persona (stored in DB, not hardcoded)
@@ -433,6 +433,15 @@ async function ensureDefaults(): Promise<void> {
       console.log('[Agents] Migrated default workflow to updated context policy');
     }
   }
+
+  // Ensure all agents have the 'knowledge' capability
+  await sql`
+    UPDATE agents
+    SET capabilities = capabilities || '["knowledge"]'::jsonb,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE NOT capabilities @> '"knowledge"'
+      AND is_active = TRUE
+  `;
 }
 
 // ============ AGENT OPERATIONS ============
