@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "module": "commonjs",
-    "lib": ["ES2020"],
+    "module": "esnext",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "types": ["node"],
     "outDir": "./dist",
     "rootDir": ".",
@@ -14,12 +14,22 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "moduleResolution": "node"
+    "moduleResolution": "bundler",
+    "jsx": "preserve",
+    "plugins": [{ "name": "next" }],
+    "paths": { "@/*": ["./*"] },
+    "allowJs": true,
+    "noEmit": true,
+    "incremental": true,
+    "isolatedModules": true
   },
   "include": [
+    "next-env.d.ts",
+    "app/**/*",
     "api/**/*",
     "src/**/*",
-    "scripts/**/*"
+    "scripts/**/*",
+    "lib/**/*"
   ],
   "exclude": [
     "node_modules",
