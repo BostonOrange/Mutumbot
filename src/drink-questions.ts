@@ -39,7 +39,9 @@ import {
 } from './services/tools';
 import {
   getUserMemory,
+  getAllUserMemories,
   formatUserMemoryForContext,
+  formatAllUserMemoriesForContext,
 } from './services/userMemory';
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
@@ -477,13 +479,23 @@ export async function handleDrinkQuestion(
   }
 
   // Fetch per-user memory context if userId provided
+  // DMs get all memories across channels; guild channels get channel-scoped only
   let userMemoryContext: string | undefined;
   if (userId && username && channelId) {
     try {
-      const userMemory = await getUserMemory(userId, channelId);
-      if (userMemory) {
-        userMemoryContext = formatUserMemoryForContext(userMemory, username);
-        console.log(`[UserMemory] Loaded memory for user ${userId}`);
+      const isDm = !guildId;
+      if (isDm) {
+        const allMemories = await getAllUserMemories(userId);
+        if (allMemories.length > 0) {
+          userMemoryContext = formatAllUserMemoriesForContext(allMemories, username);
+          console.log(`[UserMemory] Loaded ${allMemories.length} memories for DM user ${userId}`);
+        }
+      } else {
+        const userMemory = await getUserMemory(userId, channelId);
+        if (userMemory) {
+          userMemoryContext = formatUserMemoryForContext(userMemory, username);
+          console.log(`[UserMemory] Loaded memory for user ${userId}`);
+        }
       }
     } catch (error) {
       console.error('[UserMemory] Failed to fetch user memory:', error);

@@ -98,11 +98,59 @@ export async function getUserMemory(
 }
 
 /**
- * Format user memory for inclusion in AI context
+ * Get all stored memories for a user across all channels
+ * Used in DMs to give the bot a complete picture of the user
+ */
+export async function getAllUserMemories(userId: string): Promise<UserMemory[]> {
+  if (!sql) return [];
+
+  try {
+    const result = await sql`
+      SELECT user_id, channel_id, guild_id, summary, message_count, last_updated_at
+      FROM user_memories
+      WHERE user_id = ${userId}
+      ORDER BY last_updated_at DESC
+    `;
+
+    return result.map(row => ({
+      userId: row.user_id as string,
+      channelId: row.channel_id as string,
+      guildId: row.guild_id as string | null,
+      summary: row.summary as string,
+      messageCount: row.message_count as number,
+      lastUpdatedAt: new Date(row.last_updated_at as string),
+    }));
+  } catch (error) {
+    console.error('[UserMemory] Failed to get all user memories:', error);
+    return [];
+  }
+}
+
+/**
+ * Format user memory for inclusion in AI context (single channel)
  */
 export function formatUserMemoryForContext(memory: UserMemory, username: string): string {
   return `[MEMORY OF ${username.toUpperCase()}]
 ${memory.summary}
+[END MEMORY]`;
+}
+
+/**
+ * Format all user memories for DM context (combined from all channels)
+ */
+export function formatAllUserMemoriesForContext(memories: UserMemory[], username: string): string {
+  if (memories.length === 0) return '';
+  if (memories.length === 1) return formatUserMemoryForContext(memories[0], username);
+
+  const combined = memories.map(m => m.summary).join('\n\n');
+  // Cap combined length to avoid bloating the prompt
+  const MAX_COMBINED_CHARS = 3000;
+  const truncated = combined.length > MAX_COMBINED_CHARS
+    ? combined.slice(0, MAX_COMBINED_CHARS) + '...'
+    : combined;
+
+  return `[MEMORY OF ${username.toUpperCase()} (from ${memories.length} channels)]
+${truncated}
 [END MEMORY]`;
 }
 
