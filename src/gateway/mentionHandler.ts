@@ -26,6 +26,7 @@ import { ISEE_EMOJI, getRandomPhrase, NO_TRIBUTES_PHRASES, TRIBUTES_RECEIVED_STA
 import { formatPersonalStats, formatLeaderboard } from '../formatters';
 import { addToContext } from '../services/conversationContext';
 import { maybeUpdateUserMemory } from '../services/userMemory';
+import { isAdmin, isAdminCommand, handleAdminCommand } from './adminHandler';
 
 // Category labels for context
 const CATEGORY_LABELS: Record<string, string> = {
@@ -45,6 +46,17 @@ export async function handleMentionMessage(message: Message): Promise<Message | 
   const userId = message.author.id;
   const username = message.member?.displayName || message.author.displayName || message.author.username;
   const isDM = !message.guild;
+
+  // Check for admin commands first (before normal mention handling)
+  const cleanedForAdmin = message.content.replace(/<@!?\d+>/g, '').trim();
+  if (isAdmin(userId) && isAdminCommand(cleanedForAdmin)) {
+    const response = await handleAdminCommand(message);
+    if (response) {
+      const reply = await message.reply(response);
+      return reply;
+    }
+    return null;
+  }
 
   // Check for image attachments
   const imageAttachment = message.attachments.find(att =>

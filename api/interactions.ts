@@ -155,6 +155,7 @@ async function handleApplicationCommand(
   const username =
     interaction.member?.user?.username || interaction.user?.username || 'Unknown Mortal';
   const guildId = interaction.guild_id || 'dm';
+  const guildIdOrNull = interaction.guild_id || null;
   const channelId = interaction.channel_id;
 
   switch (commandName) {
@@ -202,7 +203,7 @@ async function handleApplicationCommand(
     case 'ask': {
       const questionOption = options.find(opt => opt.name === 'question');
       const question = (questionOption?.value as string) || '';
-      const result = await handleDrinkQuestion(question, channelId);
+      const result = await handleDrinkQuestion(question, channelId, undefined, undefined, guildIdOrNull, userId, username);
 
       return {
         type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
@@ -217,7 +218,7 @@ async function handleApplicationCommand(
       if (subcommand === 'ask') {
         const questionOption = options[0]?.options?.find(opt => opt.name === 'question');
         const question = (questionOption?.value as string) || '';
-        const result = await handleDrinkQuestion(question, channelId);
+        const result = await handleDrinkQuestion(question, channelId, undefined, undefined, guildIdOrNull, userId, username);
 
         return {
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,

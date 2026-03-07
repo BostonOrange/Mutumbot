@@ -359,6 +359,35 @@ export async function updateThreadSummary(
   `;
 }
 
+/**
+ * Reset a thread's history (summary and/or items)
+ * Used when reassigning an agent to avoid persona confusion
+ */
+export async function resetThread(
+  threadId: string,
+  options: { clearSummary?: boolean; clearItems?: boolean } = {}
+): Promise<void> {
+  if (!sql) return;
+
+  const { clearSummary = true, clearItems = true } = options;
+
+  if (clearSummary) {
+    await sql`
+      UPDATE threads
+      SET summary = NULL, summary_updated_at = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE thread_id = ${threadId}
+    `;
+  }
+
+  if (clearItems) {
+    await sql`
+      DELETE FROM thread_items WHERE thread_id = ${threadId}
+    `;
+  }
+
+  console.log(`[Threads] Reset thread ${threadId} (summary: ${clearSummary}, items: ${clearItems})`);
+}
+
 // ============ THREAD ITEM OPERATIONS ============
 
 /**

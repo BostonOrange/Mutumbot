@@ -15,6 +15,7 @@
 
 import { sql } from '../db';
 import { SAFETY_GUARDRAILS, DEFAULT_MUTUMBOT_PERSONA } from '../personality';
+import { resetThread } from './threads';
 
 // ============ TYPES ============
 
@@ -698,10 +699,12 @@ export async function updateWorkflow(
 
 /**
  * Assign a workflow to a thread
+ * @param resetHistory - If true, clears the thread's summary and items to avoid persona confusion
  */
 export async function assignWorkflowToThread(
   threadId: string,
-  workflowId: string
+  workflowId: string,
+  options: { resetHistory?: boolean } = {}
 ): Promise<void> {
   if (!sql) return;
 
@@ -710,6 +713,10 @@ export async function assignWorkflowToThread(
     SET workflow_id = ${workflowId}::uuid, updated_at = CURRENT_TIMESTAMP
     WHERE thread_id = ${threadId}
   `;
+
+  if (options.resetHistory) {
+    await resetThread(threadId);
+  }
 }
 
 /**
