@@ -27,6 +27,7 @@ import {
 } from '@/src/drink-questions';
 import { ISEE_EMOJI, getRandomPhrase, TRIBUTE_DEMAND_PHRASES } from '@/src/personality';
 import { formatPersonalStats, formatLeaderboard } from '@/src/formatters';
+import { resolveConfigWithDefaults } from '@/src/services/agents';
 
 export const dynamic = 'force-dynamic';
 
@@ -121,6 +122,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   return NextResponse.json({ error: 'Unknown interaction type' }, { status: 400 });
 }
 
+/** Capability required for each command. Null = always available. */
+const COMMAND_CAPABILITIES: Record<string, string | null> = {
+  tribute: 'tribute_tracking',
+  tally: 'tribute_tracking',
+  demand: 'tribute_tracking',
+  ask: null,
+  drink: null, // 'drink random' has its own check
+  cheers: null,
+};
+
+function capabilityDenied(command: string, capability: string): InteractionResponse {
+  return {
+    type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+    data: {
+      content: `${ISEE_EMOJI} The \`/${command}\` command requires the **${capability}** capability, which is not enabled for this channel's agent.`,
+    },
+  };
+}
+
 async function handleApplicationCommand(
   interaction: DiscordInteraction
 ): Promise<InteractionResponse> {
@@ -133,6 +153,27 @@ async function handleApplicationCommand(
   const guildIdOrNull = interaction.guild_id || null;
   const channelId = interaction.channel_id;
 
+  // Resolve agent capabilities for this channel
+  const threadId = guildIdOrNull
+    ? `discord:${guildIdOrNull}:${channelId}`
+    : `discord:dm:${channelId}`;
+  let capabilities: string[] = [];
+  try {
+    const config = await resolveConfigWithDefaults(threadId);
+    capabilities = config.agent.capabilities;
+  } catch {
+    // If resolution fails, allow all commands (graceful degradation)
+    capabilities = Object.values(COMMAND_CAPABILITIES).filter((v): v is string => v !== null);
+  }
+
+  const hasCap = (cap: string) => capabilities.includes(cap);
+
+  // Check command-level capability gate
+  const requiredCap = COMMAND_CAPABILITIES[commandName || ''];
+  if (requiredCap && !hasCap(requiredCap)) {
+    return capabilityDenied(commandName || '', requiredCap);
+  }
+
   switch (commandName) {
     case 'tribute': {
       const subcommand = options[0]?.name || 'status';
@@ -144,6 +185,14 @@ async function handleApplicationCommand(
           imageUrl = interaction.data.resolved.attachments[attachmentId]?.url;
         }
         if (imageUrl) {
+          // Image analysis requires the image_analysis capability
+          if (!hasCap('image_analysis')) {
+            const result = await handleTributeCommand(subcommand, userId, username, guildId, imageUrl);
+            return {
+              type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+              data: result,
+            };
+          }
           try {
             const analysis = await analyzeImage(imageUrl, undefined, isFriday(), guildId === 'dm');
             if (analysis) {
@@ -210,6 +259,9 @@ async function handleApplicationCommand(
         };
       }
       if (subcommand === 'random') {
+        if (!hasCap('random_facts')) {
+          return capabilityDenied('drink random', 'random_facts');
+        }
         const result = await handleRandomDrinkFact();
         return {
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,

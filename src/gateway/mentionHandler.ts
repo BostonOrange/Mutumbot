@@ -27,6 +27,7 @@ import { formatPersonalStats, formatLeaderboard } from '../formatters';
 import { addToContext } from '../services/conversationContext';
 import { maybeUpdateUserMemory } from '../services/userMemory';
 import { isAdmin, isAdminCommand, handleAdminCommand } from './adminHandler';
+import { resolveConfigWithDefaults } from '../services/agents';
 
 // Category labels for context
 const CATEGORY_LABELS: Record<string, string> = {
@@ -47,6 +48,18 @@ export async function handleMentionMessage(message: Message): Promise<Message | 
   const username = message.member?.displayName || message.author.displayName || message.author.username;
   const isDM = !message.guild;
 
+  // Resolve agent capabilities for this channel
+  const threadId = isDM ? `discord:dm:${channelId}` : `discord:${guildId}:${channelId}`;
+  let capabilities: string[] = [];
+  try {
+    const config = await resolveConfigWithDefaults(threadId);
+    capabilities = config.agent.capabilities;
+  } catch {
+    // Graceful degradation: allow everything if resolution fails
+    capabilities = ['image_analysis', 'tribute_tracking', 'web_search', 'scheduled_messages', 'random_facts', 'knowledge'];
+  }
+  const hasCap = (cap: string) => capabilities.includes(cap);
+
   // Check for admin commands first (before normal mention handling)
   const cleanedForAdmin = message.content.replace(/<@!?\d+>/g, '').trim();
   if (isAdmin(userId) && isAdminCommand(cleanedForAdmin)) {
@@ -66,9 +79,11 @@ export async function handleMentionMessage(message: Message): Promise<Message | 
 
   const isSpecialDay = isFriday();
 
-  // If there's an image, treat as a tribute
-  if (imageAttachment) {
-    const imageAnalysis = await analyzeImage(imageAttachment.url, message.content, isSpecialDay, isDM);
+  // If there's an image, treat as a tribute (requires image_analysis + tribute_tracking)
+  if (imageAttachment && hasCap('tribute_tracking')) {
+    const imageAnalysis = hasCap('image_analysis')
+      ? await analyzeImage(imageAttachment.url, message.content, isSpecialDay, isDM)
+      : null;
 
     // Store user's message in context
     const userContextMessage = message.content
@@ -131,28 +146,27 @@ export async function handleMentionMessage(message: Message): Promise<Message | 
     return reply;
   }
 
-  // No image - check for status/tally keywords first
+  // No image - check for status/tally keywords first (gated by tribute_tracking)
   const cleanedContent = message.content.replace(/<@!?\d+>/g, '').trim().toLowerCase();
 
-  // Check for status query
-  if (isStatusQuery(cleanedContent)) {
-    const statusResponse = await handleStatusQuery(userId, username, guildId);
-    const reply = await message.reply(statusResponse);
-    return reply;
-  }
+  if (hasCap('tribute_tracking')) {
+    if (isStatusQuery(cleanedContent)) {
+      const statusResponse = await handleStatusQuery(userId, username, guildId);
+      const reply = await message.reply(statusResponse);
+      return reply;
+    }
 
-  // Check for personal stats query
-  if (isPersonalStatsQuery(cleanedContent)) {
-    const statsResponse = await handlePersonalStatsQuery(userId, username, guildId);
-    const reply = await message.reply(statsResponse);
-    return reply;
-  }
+    if (isPersonalStatsQuery(cleanedContent)) {
+      const statsResponse = await handlePersonalStatsQuery(userId, username, guildId);
+      const reply = await message.reply(statsResponse);
+      return reply;
+    }
 
-  // Check for leaderboard query
-  if (isLeaderboardQuery(cleanedContent)) {
-    const leaderboardResponse = await handleLeaderboardQuery(guildId);
-    const reply = await message.reply(leaderboardResponse);
-    return reply;
+    if (isLeaderboardQuery(cleanedContent)) {
+      const leaderboardResponse = await handleLeaderboardQuery(guildId);
+      const reply = await message.reply(leaderboardResponse);
+      return reply;
+    }
   }
 
   // General question/conversation - only include database context if question relates to tributes/data
