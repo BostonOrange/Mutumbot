@@ -116,10 +116,11 @@ export async function getFullUserStats(userId: string, guildId?: string): Promis
   friday: TributeStatsResult;
   private: TributeStatsResult;
 }> {
+  // Personal stats are cross-guild (truly "All-Time") — guild scoping is only for leaderboards
   const [allTime, daily, friday, privateStats] = await Promise.all([
-    getAllTimeStats(userId, guildId),
-    getDailyStats(userId, guildId),
-    getFridayStats(userId, guildId),
+    getAllTimeStats(userId),
+    getDailyStats(userId),
+    getFridayStats(userId),
     getPrivateStats(userId),
   ]);
 

@@ -23,11 +23,15 @@ export function formatPersonalStats(
   stats: StatsData,
   rankText: string
 ): string {
+  const totalScore = stats.allTime.score + stats.private.score;
+  const totalCount = stats.allTime.count + stats.private.count;
+
   return `${ISEE_EMOJI} **${username}**, the spirits reveal your devotion...\n\n` +
-    `**All-Time:** ${stats.allTime.score} pts (${stats.allTime.count} tributes) - ${rankText}\n` +
+    `**All-Time:** ${totalScore} pts (${totalCount} tributes) - ${rankText}\n` +
+    `**Server:** ${stats.allTime.score} pts (${stats.allTime.count} tributes)\n` +
+    `**DMs:** ${stats.private.score} pts (${stats.private.count} tributes)\n` +
     `**Fridays:** ${stats.friday.score} pts (${stats.friday.count} tributes)\n` +
-    `**Today:** ${stats.daily.score} pts (${stats.daily.count} tributes)\n` +
-    `**Private Devotion:** ${stats.private.score} pts (${stats.private.count} DM tributes)\n\n` +
+    `**Today:** ${stats.daily.score} pts (${stats.daily.count} tributes)\n\n` +
     `*Scoring: Tiki=10pts, Cocktail=5pts, Beer/Wine=2pts, Other=1pt*`;
 }
 
