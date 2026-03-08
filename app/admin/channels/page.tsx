@@ -1,8 +1,7 @@
 'use client';
 
 // Usage: /admin/channels
-// Displays all threads with a workflow assigned, allows updating or removing assignments,
-// and provides a form to assign a workflow to a new thread ID.
+// Displays all known threads with Discord names, memory stats, and workflow assignments.
 
 import { useState, useEffect, useCallback } from 'react';
 
@@ -11,6 +10,12 @@ interface ChannelRow {
   workflow_id: string | null;
   workflow_name: string | null;
   agent_name: string | null;
+  guild_name: string | null;
+  channel_name: string | null;
+  summary: string | null;
+  summary_updated_at: string | null;
+  updated_at: string | null;
+  item_count: number;
 }
 
 interface Workflow {
@@ -23,9 +28,7 @@ type ActionStatus = { type: 'success' | 'error'; message: string; threadId: stri
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function formatThreadId(threadId: string): string {
-  // discord:guildId:channelId → show channelId
-  // discord:dm:channelId → show "DM: channelId"
+function formatThreadIdShort(threadId: string): string {
   const parts = threadId.split(':');
   if (parts.length === 3 && parts[0] === 'discord') {
     if (parts[1] === 'dm') return `DM: ${parts[2]}`;
@@ -34,13 +37,18 @@ function formatThreadId(threadId: string): string {
   return threadId;
 }
 
-function formatThreadIdFull(threadId: string): string {
-  const parts = threadId.split(':');
-  if (parts.length === 3 && parts[0] === 'discord') {
-    if (parts[1] === 'dm') return `DM channel ${parts[2]}`;
-    return `Guild ${parts[1]}, channel ${parts[2]}`;
-  }
-  return threadId;
+function formatRelativeTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return 'just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 30) return `${diffDays}d ago`;
+  return date.toLocaleDateString();
 }
 
 // ─── Shared style constants ───────────────────────────────────────────────────
@@ -111,9 +119,102 @@ function WorkflowSelect({
   );
 }
 
-// ─── Assigned channels table row ──────────────────────────────────────────────
+// ─── Memory / History panel ──────────────────────────────────────────────────
 
-function AssignedRow({
+interface ThreadItem {
+  id: string;
+  type: string;
+  role: string;
+  author_id: string | null;
+  author_name: string | null;
+  content: string;
+  created_at: string;
+}
+
+function MemoryPanel({ row }: { row: ChannelRow }) {
+  const [expanded, setExpanded] = useState(false);
+  const [historyItems, setHistoryItems] = useState<ThreadItem[] | null>(null);
+  const [historySummary, setHistorySummary] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const hasSummary = !!row.summary;
+  const hasMemory = row.item_count > 0 || hasSummary;
+
+  if (!hasMemory) {
+    return <span className="text-xs text-gray-600 italic">No memory</span>;
+  }
+
+  async function loadHistory() {
+    if (historyItems !== null) {
+      setExpanded(!expanded);
+      return;
+    }
+    setExpanded(true);
+    setHistoryLoading(true);
+    try {
+      const res = await fetch(`/api/admin/channels/${encodeURIComponent(row.thread_id)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setHistoryItems(data.items ?? []);
+        setHistorySummary(data.summary ?? null);
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={loadHistory}
+        className="text-xs text-amber-400 hover:text-amber-300 transition-colors"
+      >
+        {row.item_count} messages{hasSummary ? ' + summary' : ''}
+        {row.summary_updated_at && ` (${formatRelativeTime(row.summary_updated_at)})`}
+        <span className="ml-1">{expanded ? '\u25B2' : '\u25BC'}</span>
+      </button>
+      {expanded && (
+        <div className="mt-2 rounded-md bg-gray-800/60 border border-gray-700 p-3 max-h-64 overflow-y-auto space-y-2">
+          {historyLoading && <p className="text-xs text-gray-500">Loading...</p>}
+          {historySummary && (
+            <div className="pb-2 mb-2 border-b border-gray-700">
+              <p className="text-xs font-semibold text-gray-400 mb-1">Rolling Summary</p>
+              <p className="text-xs text-gray-500 whitespace-pre-wrap">{historySummary}</p>
+            </div>
+          )}
+          {historyItems && historyItems.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-xs font-semibold text-gray-400 mb-1">
+                Recent Messages (newest first)
+              </p>
+              {historyItems.map((item) => (
+                <div key={item.id} className="text-xs">
+                  <span className={`font-medium ${item.role === 'assistant' ? 'text-amber-400' : 'text-blue-400'}`}>
+                    {item.author_name ?? (item.role === 'assistant' ? 'Bot' : 'User')}
+                  </span>
+                  <span className="text-gray-600 ml-1.5">
+                    {formatRelativeTime(item.created_at)}
+                  </span>
+                  <p className="text-gray-400 mt-0.5 whitespace-pre-wrap break-words">{item.content}</p>
+                </div>
+              ))}
+            </div>
+          )}
+          {historyItems && historyItems.length === 0 && !historySummary && (
+            <p className="text-xs text-gray-600 italic">No conversation history found.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Channel table row ──────────────────────────────────────────────────────
+
+function ChannelTableRow({
   row,
   workflows,
   onUpdate,
@@ -140,26 +241,39 @@ function AssignedRow({
 
   return (
     <tr className="border-b border-gray-800 last:border-0">
-      {/* Thread ID */}
+      {/* Channel info */}
       <td className="py-3 px-4 align-top">
-        <span
-          className="block text-sm font-mono text-gray-100 truncate max-w-[140px]"
-          title={formatThreadIdFull(row.thread_id)}
-        >
-          {formatThreadId(row.thread_id)}
-        </span>
-        <span className="block text-xs text-gray-500 mt-0.5 font-mono truncate max-w-[140px]">
-          {row.thread_id}
-        </span>
+        <div className="min-w-[160px]">
+          {row.channel_name ? (
+            <span className="block text-sm font-medium text-gray-100">
+              #{row.channel_name}
+            </span>
+          ) : (
+            <span className="block text-sm font-mono text-gray-100 truncate max-w-[160px]">
+              {formatThreadIdShort(row.thread_id)}
+            </span>
+          )}
+          {row.guild_name && (
+            <span className="block text-xs text-gray-500 mt-0.5">{row.guild_name}</span>
+          )}
+          <span className="block text-xs text-gray-600 mt-0.5 font-mono truncate max-w-[200px]" title={row.thread_id}>
+            {row.thread_id}
+          </span>
+        </div>
       </td>
 
       {/* Agent */}
       <td className="py-3 px-4 align-top">
         {row.workflow_id ? (
-          <span className="text-sm text-gray-300">{row.agent_name ?? '—'}</span>
+          <span className="text-sm text-gray-300">{row.agent_name ?? '\u2014'}</span>
         ) : (
           <span className="text-xs text-amber-400 italic">Unassigned (uses default)</span>
         )}
+      </td>
+
+      {/* Memory */}
+      <td className="py-3 px-4 align-top">
+        <MemoryPanel row={row} />
       </td>
 
       {/* Workflow dropdown */}
@@ -173,19 +287,29 @@ function AssignedRow({
         />
       </td>
 
-      {/* Reset history */}
+      {/* Reset history + Update */}
       <td className="py-3 px-4 align-top whitespace-nowrap">
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={resetHistory}
-            onChange={(e) => setResetHistory(e.target.checked)}
-            disabled={saving}
-            className="accent-amber-500 h-4 w-4 cursor-pointer"
-            aria-label="Reset conversation history"
-          />
-          <span className="text-xs text-gray-400">Reset history</span>
-        </label>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={resetHistory}
+              onChange={(e) => setResetHistory(e.target.checked)}
+              disabled={saving}
+              className="accent-amber-500 h-4 w-4 cursor-pointer"
+              aria-label="Reset conversation history"
+            />
+            <span className="text-xs text-gray-400">Reset</span>
+          </label>
+          <button
+            type="button"
+            disabled={saving || !isDirty}
+            onClick={handleUpdate}
+            className="rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 text-xs font-semibold text-white transition-colors whitespace-nowrap"
+          >
+            {saving ? 'Saving...' : 'Update'}
+          </button>
+        </div>
         {isThisRowStatus && (
           <p
             className={`text-xs mt-1 ${
@@ -195,18 +319,6 @@ function AssignedRow({
             {actionStatus?.message}
           </p>
         )}
-      </td>
-
-      {/* Update button */}
-      <td className="py-3 px-4 align-top">
-        <button
-          type="button"
-          disabled={saving || !isDirty}
-          onClick={handleUpdate}
-          className="rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 text-xs font-semibold text-white transition-colors whitespace-nowrap"
-        >
-          {saving ? 'Saving...' : 'Update'}
-        </button>
       </td>
     </tr>
   );
@@ -431,7 +543,7 @@ export default function ChannelsPage() {
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-gray-100">Channel Assignments</h2>
         <p className="mt-1 text-sm text-gray-500">
-          Map Discord threads to workflows. The assigned workflow controls which AI agent and context
+          Map Discord channels to workflows. The assigned workflow controls which AI agent and context
           policy applies when the bot responds in that channel.
         </p>
       </div>
@@ -450,10 +562,10 @@ export default function ChannelsPage() {
         </div>
       )}
 
-      {/* ── Assigned Channels Table ── */}
-      <section aria-labelledby="assigned-heading" className="mb-10">
+      {/* ── Channels Table ── */}
+      <section aria-labelledby="channels-heading" className="mb-10">
         <h3
-          id="assigned-heading"
+          id="channels-heading"
           className="text-base font-semibold text-gray-200 mb-4"
         >
           Known Channels
@@ -465,51 +577,36 @@ export default function ChannelsPage() {
           </div>
         ) : channels.length === 0 ? (
           <div className="rounded-lg border border-dashed border-gray-700 px-8 py-16 text-center">
-            <p className="text-sm font-medium text-gray-400">No channels assigned</p>
+            <p className="text-sm font-medium text-gray-400">No channels found</p>
             <p className="mt-1 text-xs text-gray-600">
-              Use the form below to assign a workflow to a channel.
+              Channels appear here automatically when the bot interacts in them. You can also add one manually below.
             </p>
           </div>
         ) : (
           <div className="rounded-lg border border-gray-800 overflow-x-auto">
-            <table className="w-full text-left" aria-label="Assigned channels">
+            <table className="w-full text-left" aria-label="Known channels">
               <thead>
                 <tr className="border-b border-gray-700 bg-gray-900/60">
-                  <th
-                    scope="col"
-                    className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500"
-                  >
+                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">
                     Channel
                   </th>
-                  <th
-                    scope="col"
-                    className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500"
-                  >
+                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">
                     Agent
                   </th>
-                  <th
-                    scope="col"
-                    className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500"
-                  >
+                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">
+                    Memory
+                  </th>
+                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">
                     Workflow
                   </th>
-                  <th
-                    scope="col"
-                    className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500"
-                  >
-                    Options
-                  </th>
-                  <th
-                    scope="col"
-                    className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500"
-                  >
-                    {/* Actions column — no heading text */}
+                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">
+                    Actions
                   </th>
                 </tr>
               </thead>
               <tbody className="bg-gray-900 divide-y divide-gray-800">
                 {channels.map((row) => (
-                  <AssignedRow
+                  <ChannelTableRow
                     key={row.thread_id}
                     row={row}
                     workflows={workflows}
