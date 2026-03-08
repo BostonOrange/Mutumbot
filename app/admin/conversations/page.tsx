@@ -271,18 +271,50 @@ export default function ConversationsPage() {
       ) : (
         <div className="flex gap-6">
           {/* Channel list */}
-          <div className="w-72 shrink-0 space-y-2 max-h-[calc(100vh-200px)] overflow-y-auto">
+          <div className="w-72 shrink-0 max-h-[calc(100vh-200px)] overflow-y-auto">
             {channels.length === 0 ? (
               <p className="text-sm text-gray-500 p-4">No channels found.</p>
             ) : (
-              channels.map((ch) => (
-                <ChannelCard
-                  key={ch.thread_id}
-                  channel={ch}
-                  isSelected={ch.thread_id === selectedThreadId}
-                  onClick={() => selectChannel(ch.thread_id)}
-                />
-              ))
+              <>
+                {channels.some((c) => !c.thread_id.includes(':dm:')) && (
+                  <div className="mb-4">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 px-1 mb-2">
+                      Server Channels
+                    </p>
+                    <div className="space-y-2">
+                      {channels
+                        .filter((c) => !c.thread_id.includes(':dm:'))
+                        .map((ch) => (
+                          <ChannelCard
+                            key={ch.thread_id}
+                            channel={ch}
+                            isSelected={ch.thread_id === selectedThreadId}
+                            onClick={() => selectChannel(ch.thread_id)}
+                          />
+                        ))}
+                    </div>
+                  </div>
+                )}
+                {channels.some((c) => c.thread_id.includes(':dm:')) && (
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 px-1 mb-2">
+                      Direct Messages
+                    </p>
+                    <div className="space-y-2">
+                      {channels
+                        .filter((c) => c.thread_id.includes(':dm:'))
+                        .map((ch) => (
+                          <ChannelCard
+                            key={ch.thread_id}
+                            channel={ch}
+                            isSelected={ch.thread_id === selectedThreadId}
+                            onClick={() => selectChannel(ch.thread_id)}
+                          />
+                        ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
 

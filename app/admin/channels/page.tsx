@@ -356,6 +356,66 @@ function AssignNewForm({
   );
 }
 
+// ─── Channel table (reusable for server channels and DMs) ────────────────────
+
+function ChannelTable({
+  heading,
+  rows,
+  workflows,
+  onUpdate,
+  actionStatus,
+}: {
+  heading: string;
+  rows: ChannelRow[];
+  workflows: Workflow[];
+  onUpdate: (threadId: string, workflowId: string, resetHistory: boolean) => Promise<void>;
+  actionStatus: ActionStatus;
+}) {
+  if (rows.length === 0) {
+    return (
+      <section className="mb-10">
+        <h3 className="text-base font-semibold text-gray-200 mb-4">{heading}</h3>
+        <div className="rounded-lg border border-dashed border-gray-700 px-8 py-10 text-center">
+          <p className="text-sm text-gray-500">No {heading.toLowerCase()} found</p>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="mb-10">
+      <h3 className="text-base font-semibold text-gray-200 mb-4">
+        {heading}
+        <span className="ml-2 text-xs font-normal text-gray-500">{rows.length}</span>
+      </h3>
+      <div className="rounded-lg border border-gray-800 overflow-x-auto">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="border-b border-gray-700 bg-gray-900/60">
+              <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Channel</th>
+              <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Agent</th>
+              <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Activity</th>
+              <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Workflow</th>
+              <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="bg-gray-900 divide-y divide-gray-800">
+            {rows.map((row) => (
+              <ChannelTableRow
+                key={row.thread_id}
+                row={row}
+                workflows={workflows}
+                onUpdate={onUpdate}
+                actionStatus={actionStatus}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ChannelsPage() {
@@ -448,49 +508,35 @@ export default function ChannelsPage() {
         </div>
       )}
 
-      <section aria-labelledby="channels-heading" className="mb-10">
-        <h3 id="channels-heading" className="text-base font-semibold text-gray-200 mb-4">
-          Known Channels
-        </h3>
-
-        {loading ? (
-          <div className="rounded-lg border border-gray-800 bg-gray-900 px-6 py-10 text-center">
-            <p className="text-sm text-gray-500">Loading...</p>
-          </div>
-        ) : channels.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-gray-700 px-8 py-16 text-center">
-            <p className="text-sm font-medium text-gray-400">No channels found</p>
-            <p className="mt-1 text-xs text-gray-600">
-              Channels appear here automatically when the bot interacts in them.
-            </p>
-          </div>
-        ) : (
-          <div className="rounded-lg border border-gray-800 overflow-x-auto">
-            <table className="w-full text-left" aria-label="Known channels">
-              <thead>
-                <tr className="border-b border-gray-700 bg-gray-900/60">
-                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Channel</th>
-                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Agent</th>
-                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Activity</th>
-                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Workflow</th>
-                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="bg-gray-900 divide-y divide-gray-800">
-                {channels.map((row) => (
-                  <ChannelTableRow
-                    key={row.thread_id}
-                    row={row}
-                    workflows={workflows}
-                    onUpdate={(tid, wid, reset) => handleAssign(tid, wid, reset, false)}
-                    actionStatus={actionStatus}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+      {loading ? (
+        <div className="rounded-lg border border-gray-800 bg-gray-900 px-6 py-10 text-center mb-10">
+          <p className="text-sm text-gray-500">Loading...</p>
+        </div>
+      ) : channels.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-gray-700 px-8 py-16 text-center mb-10">
+          <p className="text-sm font-medium text-gray-400">No channels found</p>
+          <p className="mt-1 text-xs text-gray-600">
+            Channels appear here automatically when the bot interacts in them.
+          </p>
+        </div>
+      ) : (
+        <>
+          <ChannelTable
+            heading="Server Channels"
+            rows={channels.filter((c) => !c.thread_id.includes(':dm:'))}
+            workflows={workflows}
+            onUpdate={(tid, wid, reset) => handleAssign(tid, wid, reset, false)}
+            actionStatus={actionStatus}
+          />
+          <ChannelTable
+            heading="Direct Messages"
+            rows={channels.filter((c) => c.thread_id.includes(':dm:'))}
+            workflows={workflows}
+            onUpdate={(tid, wid, reset) => handleAssign(tid, wid, reset, false)}
+            actionStatus={actionStatus}
+          />
+        </>
+      )}
 
       <section aria-labelledby="assign-new-heading">
         <div className="max-w-lg rounded-lg border border-gray-800 bg-gray-900 p-6">
