@@ -133,7 +133,7 @@ async function agentCreate(name: string | undefined): Promise<string> {
 
   const agent = await createAgent(name, {
     description: `Created via admin command`,
-    capabilities: ['image_analysis', 'tribute_tracking'],
+    capabilities: [],
   });
   return `Agent **${agent.name}** created (id: \`${agent.id}\`). Use \`!agent edit ${name} prompt <system prompt>\` to set the persona.`;
 }
@@ -227,8 +227,9 @@ Context policy: ${cp.recentMessages} messages, ${cp.maxAgeHours}h window, ${cp.m
 }
 
 async function workflowCreate(args: string[]): Promise<string> {
-  const name = args[0];
-  const agentArg = args.find(a => a.toLowerCase().startsWith('agent='));
+  const agentArgIndex = args.findIndex(a => a.toLowerCase().startsWith('agent='));
+  const agentArg = agentArgIndex >= 0 ? args[agentArgIndex] : undefined;
+  const name = agentArgIndex > 0 ? args.slice(0, agentArgIndex).join(' ') : args[0];
 
   if (!name || !agentArg) {
     return 'Usage: `!workflow create <name> agent=<agentName>`';

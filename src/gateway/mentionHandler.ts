@@ -180,7 +180,7 @@ export async function handleMentionMessage(message: Message): Promise<Message | 
  */
 function isStatusQuery(content: string): boolean {
   const statusKeywords = [
-    'tribute status', 'status', 'who has offered', 'who has tributed',
+    'tribute status', 'friday status', 'who has offered', 'who has tributed',
     'offerings today', 'friday offerings', 'friday tributes',
     'who offered', 'who tributed', 'any tributes', 'any offerings'
   ];
@@ -206,7 +206,7 @@ function isLeaderboardQuery(content: string): boolean {
   const leaderboardKeywords = [
     'leaderboard', 'top tributes', 'rankings', 'who is winning',
     'who\'s winning', 'who is leading', 'who\'s leading', 'best devoted',
-    'most devoted', 'top devoted', 'tally'
+    'most devoted', 'top devoted', 'show the tally', 'the tally'
   ];
   return leaderboardKeywords.some(keyword => content.includes(keyword));
 }
@@ -219,11 +219,11 @@ function needsTributeContext(content: string): boolean {
   const tributeKeywords = [
     'tribute', 'score', 'tally', 'points', 'pts',
     'devotion', 'offering', 'rank', 'ranking',
-    'how many', 'how much', 'total',
-    'history', 'record', 'past',
+    'how many tributes', 'how much devotion',
+    'tribute history', 'tribute record',
     'friday', 'fridays',
-    'who', 'anyone', 'everybody', 'everyone',
-    'remember', 'last time', 'before',
+    'who offered', 'who tributed', 'who has offered',
+    'last tribute', 'my tribute',
   ];
   return tributeKeywords.some(keyword => content.includes(keyword));
 }
@@ -239,10 +239,11 @@ async function handleStatusQuery(userId: string, username: string, guildId: stri
     return `${getRandomPhrase(NO_TRIBUTES_PHRASES)}\n\n**${fridayLabel}**: The offering hall stands EMPTY.${isFriday() ? '\n\nMention me with an image to make your offering!' : ''}`;
   }
 
+  const guildIdOrUndefined = guildId === 'dm' ? undefined : guildId;
   const devoteePromises = status.posts.map(async p => {
     const [stats, fridayS] = await Promise.all([
-      getFullUserStats(p.userId, guildId),
-      getFridayStats(p.userId, guildId),
+      getFullUserStats(p.userId),
+      getFridayStats(p.userId, guildIdOrUndefined),
     ]);
     return `  - ${p.username} (${stats.allTime.score}pts from ${stats.allTime.count} tributes | Fridays: ${fridayS.score}pts)`;
   });
@@ -263,12 +264,13 @@ async function handleStatusQuery(userId: string, username: string, guildId: stri
  * Handle personal stats query
  */
 async function handlePersonalStatsQuery(userId: string, username: string, guildId: string): Promise<string> {
+  const isDm = guildId === 'dm';
   const [stats, allTimeBoard] = await Promise.all([
-    getFullUserStats(userId, guildId),
-    getAllTimeLeaderboard(50, guildId),
+    getFullUserStats(userId),
+    isDm ? Promise.resolve([]) : getAllTimeLeaderboard(50, guildId),
   ]);
   const rank = allTimeBoard.findIndex(e => e.userId === userId) + 1;
-  const rankText = rank > 0 ? `#${rank} of ${allTimeBoard.length}` : 'Unranked';
+  const rankText = !isDm && rank > 0 ? `#${rank} of ${allTimeBoard.length}` : '';
 
   return formatPersonalStats(username, stats, rankText);
 }
@@ -277,10 +279,11 @@ async function handlePersonalStatsQuery(userId: string, username: string, guildI
  * Handle leaderboard query
  */
 async function handleLeaderboardQuery(guildId: string): Promise<string> {
+  const guildIdOrUndefined = guildId === 'dm' ? undefined : guildId;
   const [allTimeRaw, dailyRaw, fridayRaw] = await Promise.all([
-    getAllTimeLeaderboard(50, guildId),
-    getDailyLeaderboard(20, guildId),
-    getFridayLeaderboard(20, guildId),
+    getAllTimeLeaderboard(50, guildIdOrUndefined),
+    getDailyLeaderboard(20, guildIdOrUndefined),
+    getFridayLeaderboard(20, guildIdOrUndefined),
   ]);
   return formatLeaderboard(allTimeRaw.slice(0, 10), dailyRaw.slice(0, 5), fridayRaw.slice(0, 5));
 }

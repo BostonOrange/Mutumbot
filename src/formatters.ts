@@ -27,8 +27,8 @@ export function formatPersonalStats(
   const totalCount = stats.allTime.count + stats.private.count;
 
   return `${ISEE_EMOJI} **${username}**, the spirits reveal your devotion...\n\n` +
-    `**All-Time:** ${totalScore} pts (${totalCount} tributes) - ${rankText}\n` +
-    `**Server:** ${stats.allTime.score} pts (${stats.allTime.count} tributes)\n` +
+    `**All-Time:** ${totalScore} pts (${totalCount} tributes)\n` +
+    `**Server:** ${stats.allTime.score} pts (${stats.allTime.count} tributes)${rankText ? ` - ${rankText}` : ''}\n` +
     `**DMs:** ${stats.private.score} pts (${stats.private.count} tributes)\n` +
     `**Fridays:** ${stats.friday.score} pts (${stats.friday.count} tributes)\n` +
     `**Today:** ${stats.daily.score} pts (${stats.daily.count} tributes)\n\n` +

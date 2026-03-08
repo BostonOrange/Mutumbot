@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { getAgents } from '@/src/services/agents';
 import type { Agent } from '@/src/services/agents';
+import { getModelInfo, formatPrice, formatTokenCount } from '@/src/models';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,9 +67,18 @@ function AgentRow({ agent }: { agent: Agent }) {
         )}
       </div>
 
-      {/* Model */}
-      <div className="shrink-0 text-right">
-        <span className="text-xs font-mono text-gray-500">{agent.model}</span>
+      {/* Model + pricing */}
+      <div className="shrink-0 text-right space-y-0.5">
+        <span className="text-xs font-mono text-gray-500 block">{agent.model.split('/')[1]}</span>
+        {(() => {
+          const m = getModelInfo(agent.model);
+          if (!m) return null;
+          return (
+            <span className="text-xs text-gray-600 block">
+              {formatPrice(m.inputPricePerM)}/{formatPrice(m.outputPricePerM)} per M &middot; {formatTokenCount(m.maxInputTokens)} ctx
+            </span>
+          );
+        })()}
       </div>
     </Link>
   );

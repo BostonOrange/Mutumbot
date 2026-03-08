@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Agent } from '@/src/services/agents';
+import type { ModelInfo } from '@/src/models';
 
 // Usage:
 //   <AgentForm />                    — create mode
@@ -21,6 +22,17 @@ const AVAILABLE_CAPABILITIES = [
 
 const DEFAULT_MODEL = 'google/gemini-2.5-flash-lite';
 const DEFAULT_TEMPERATURE = 0.7;
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
+  return `${Math.round(n / 1_000)}K`;
+}
+
+function formatPrice(p: number): string {
+  if (p === 0) return 'Free';
+  if (p < 0.01) return `$${p.toFixed(3)}`;
+  return `$${p.toFixed(2)}`;
+}
 
 interface AgentFormProps {
   agent?: Agent;
@@ -56,6 +68,18 @@ export default function AgentForm({ agent }: AgentFormProps) {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+
+  const fetchModels = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/models');
+      if (res.ok) setModels(await res.json());
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { fetchModels(); }, [fetchModels]);
+
+  const selectedModel = models.find((m) => m.id === form.model);
 
   function handleField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -227,14 +251,69 @@ export default function AgentForm({ agent }: AgentFormProps) {
           <label htmlFor="model" className={labelClass}>
             Model
           </label>
-          <input
-            id="model"
-            type="text"
-            value={form.model}
-            onChange={(e) => handleField('model', e.target.value)}
-            className={inputClass}
-            placeholder={DEFAULT_MODEL}
-          />
+          {models.length > 0 ? (
+            <select
+              id="model"
+              value={form.model}
+              onChange={(e) => handleField('model', e.target.value)}
+              className={`${inputClass} cursor-pointer`}
+            >
+              {!models.find((m) => m.id === form.model) && (
+                <option value={form.model}>{form.model} (custom)</option>
+              )}
+              {/* Group by provider */}
+              {['Google', 'OpenAI', 'Anthropic', 'DeepSeek', 'Perplexity'].map((provider) => {
+                const providerModels = models.filter((m) => m.provider === provider);
+                if (providerModels.length === 0) return null;
+                return (
+                  <optgroup key={provider} label={provider}>
+                    {providerModels.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} — {formatPrice(m.inputPricePerM)}/{formatPrice(m.outputPricePerM)} per M
+                      </option>
+                    ))}
+                  </optgroup>
+                );
+              })}
+            </select>
+          ) : (
+            <input
+              id="model"
+              type="text"
+              value={form.model}
+              onChange={(e) => handleField('model', e.target.value)}
+              className={inputClass}
+              placeholder={DEFAULT_MODEL}
+            />
+          )}
+          {/* Model info card */}
+          {selectedModel && (
+            <div className="mt-3 rounded-md border border-gray-700 bg-gray-800/60 p-3 text-xs space-y-1.5">
+              <p className="text-gray-300 font-medium">{selectedModel.description}</p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-gray-400">
+                <span>In: {formatPrice(selectedModel.inputPricePerM)}/M</span>
+                <span>Out: {formatPrice(selectedModel.outputPricePerM)}/M</span>
+                <span>Context: {formatTokens(selectedModel.maxInputTokens)}</span>
+                <span>Max out: {formatTokens(selectedModel.maxOutputTokens)}</span>
+                <span>Speed: {selectedModel.speed}</span>
+              </div>
+              <div className="flex flex-wrap gap-1 pt-1">
+                {selectedModel.inputModalities.map((m) => (
+                  <span key={m} className="rounded-full bg-blue-900/40 border border-blue-700/40 px-2 py-0.5 text-blue-300">
+                    {m}
+                  </span>
+                ))}
+                {selectedModel.nativeTools.map((t) => (
+                  <span key={t} className="rounded-full bg-green-900/40 border border-green-700/40 px-2 py-0.5 text-green-300">
+                    {t.replace('_', ' ')}
+                  </span>
+                ))}
+              </div>
+              {selectedModel.notes && (
+                <p className="text-gray-500 italic">{selectedModel.notes}</p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Temperature */}

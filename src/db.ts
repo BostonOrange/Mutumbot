@@ -523,7 +523,7 @@ export async function getFridayStatus(guildId: string): Promise<FridayStatus> {
     SELECT user_id, username, guild_id, channel_id, image_url,
            category, drink_name, score, created_at
     FROM tributes
-    WHERE friday_key = ${fridayKey} AND guild_id = ${guildId}
+    WHERE friday_key = ${fridayKey} AND guild_id = ${guildId} AND is_dm = FALSE
     ORDER BY created_at ASC
   `;
 

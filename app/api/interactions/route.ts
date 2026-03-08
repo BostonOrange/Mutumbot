@@ -16,6 +16,7 @@ import {
   getAllTimeLeaderboard,
   getDailyLeaderboard,
   getFridayLeaderboard,
+  isFriday,
 } from '@/src/tribute-tracker';
 import { initializeDatabase } from '@/src/db';
 import {
@@ -144,7 +145,7 @@ async function handleApplicationCommand(
         }
         if (imageUrl) {
           try {
-            const analysis = await analyzeImage(imageUrl);
+            const analysis = await analyzeImage(imageUrl, undefined, isFriday(), guildId === 'dm');
             if (analysis) {
               const { handleMentionTribute } = await import('@/src/tribute-tracker');
               const result = await handleMentionTribute(
@@ -179,7 +180,7 @@ async function handleApplicationCommand(
         question,
         channelId,
         undefined,
-        undefined,
+        interaction.id,
         guildIdOrNull,
         userId,
         username
@@ -198,7 +199,7 @@ async function handleApplicationCommand(
           question,
           channelId,
           undefined,
-          undefined,
+          interaction.id,
           guildIdOrNull,
           userId,
           username
@@ -248,12 +249,13 @@ async function handleApplicationCommand(
     case 'tally': {
       const subcommand = options[0]?.name || 'me';
       if (subcommand === 'me') {
+        const isDm = !interaction.guild_id;
         const [stats, allTimeBoard] = await Promise.all([
-          getFullUserStats(userId, guildId),
-          getAllTimeLeaderboard(50, guildId),
+          getFullUserStats(userId),
+          isDm ? Promise.resolve([]) : getAllTimeLeaderboard(50, guildIdOrNull ?? undefined),
         ]);
         const rank = allTimeBoard.findIndex((e) => e.userId === userId) + 1;
-        const rankText = rank > 0 ? `#${rank} of ${allTimeBoard.length}` : 'Unranked';
+        const rankText = !isDm && rank > 0 ? `#${rank} of ${allTimeBoard.length}` : '';
         return {
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
           data: {
@@ -263,9 +265,9 @@ async function handleApplicationCommand(
       }
       if (subcommand === 'leaderboard') {
         const [allTimeRaw, dailyRaw, fridayRaw] = await Promise.all([
-          getAllTimeLeaderboard(50, guildId),
-          getDailyLeaderboard(20, guildId),
-          getFridayLeaderboard(20, guildId),
+          getAllTimeLeaderboard(50, guildIdOrNull ?? undefined),
+          getDailyLeaderboard(20, guildIdOrNull ?? undefined),
+          getFridayLeaderboard(20, guildIdOrNull ?? undefined),
         ]);
         return {
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,

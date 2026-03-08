@@ -11,7 +11,24 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 interface Agent {
   id: string;
   name: string;
+  model: string;
   isDefault?: boolean;
+}
+
+interface ModelInfo {
+  id: string;
+  name: string;
+  provider: string;
+  description: string;
+  inputModalities: string[];
+  maxInputTokens: number;
+  maxOutputTokens: number;
+  inputPricePerM: number;
+  outputPricePerM: number;
+  tier: string;
+  speed: string;
+  nativeTools: string[];
+  notes?: string;
 }
 
 interface TestResult {
@@ -103,6 +120,8 @@ export default function DiagnosticsPage() {
   const [copied, setCopied] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
 
+  const [models, setModels] = useState<ModelInfo[]>([]);
+
   const fetchAgents = useCallback(async () => {
     try {
       const res = await fetch('/api/admin/agents');
@@ -118,9 +137,20 @@ export default function DiagnosticsPage() {
     }
   }, []);
 
+  const fetchModels = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/models');
+      if (res.ok) setModels(await res.json());
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
     fetchAgents();
-  }, [fetchAgents]);
+    fetchModels();
+  }, [fetchAgents, fetchModels]);
+
+  const selectedAgent = agents.find((a) => a.id === selectedAgentId);
+  const selectedModel = selectedAgent ? models.find((m) => m.id === selectedAgent.model) : undefined;
 
   async function runTests(testIds: string[]) {
     setRunning(true);
@@ -277,6 +307,37 @@ export default function DiagnosticsPage() {
               ))}
             </select>
           </div>
+
+          {/* Selected model info */}
+          {selectedModel && (
+            <div className="mb-4 rounded-md border border-gray-700 bg-gray-800/60 p-3 text-xs space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-gray-200 font-medium">{selectedModel.name}</span>
+                <span className="text-gray-500">{selectedModel.provider}</span>
+              </div>
+              <p className="text-gray-400">{selectedModel.description}</p>
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-gray-400">
+                <span>In: ${selectedModel.inputPricePerM.toFixed(2)}/M</span>
+                <span>Out: ${selectedModel.outputPricePerM.toFixed(2)}/M</span>
+                <span>Context: {selectedModel.maxInputTokens >= 1_000_000 ? `${selectedModel.maxInputTokens / 1_000_000}M` : `${selectedModel.maxInputTokens / 1_000}K`}</span>
+                <span>Max out: {selectedModel.maxOutputTokens >= 1_000_000 ? `${selectedModel.maxOutputTokens / 1_000_000}M` : `${Math.round(selectedModel.maxOutputTokens / 1_000)}K`}</span>
+                <span>Speed: {selectedModel.speed}</span>
+              </div>
+              <div className="flex flex-wrap gap-1 pt-0.5">
+                {selectedModel.inputModalities.map((m: string) => (
+                  <span key={m} className="rounded-full bg-blue-900/40 border border-blue-700/40 px-1.5 py-0.5 text-blue-300">{m}</span>
+                ))}
+                {selectedModel.nativeTools.map((t: string) => (
+                  <span key={t} className="rounded-full bg-green-900/40 border border-green-700/40 px-1.5 py-0.5 text-green-300">{t.replace('_', ' ')}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {selectedAgent && !selectedModel && (
+            <div className="mb-4 rounded-md border border-gray-700 bg-gray-800/60 p-2 text-xs text-gray-500">
+              Model: <code className="text-gray-400">{selectedAgent.model}</code> (not in registry)
+            </div>
+          )}
 
           {/* Custom prompt */}
           <div className="mb-4">
