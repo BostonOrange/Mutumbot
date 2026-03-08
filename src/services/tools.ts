@@ -286,32 +286,6 @@ export const KNOWLEDGE_TOOLS: ToolDefinition[] = [
   },
 ];
 
-// ============ WEB SEARCH TOOLS ============
-
-export const WEB_SEARCH_TOOLS: ToolDefinition[] = [
-  {
-    type: 'function',
-    function: {
-      name: 'web_search',
-      description: 'Search the web for current information. Use this when users ask about recent events, need factual data you are unsure about, want recipes, cocktail ingredients, bar reviews, or any information that benefits from real-time web results.',
-      parameters: {
-        type: 'object',
-        properties: {
-          query: {
-            type: 'string',
-            description: 'The search query. Be specific and include relevant context.',
-          },
-          max_results: {
-            type: 'string',
-            description: 'Maximum number of results to return (1-5, default 3)',
-          },
-        },
-        required: ['query'],
-      },
-    },
-  },
-];
-
 // ============ TOOL EXECUTION ============
 
 /**
@@ -333,10 +307,8 @@ export function getToolsForCapabilities(capabilities: string[]): ToolDefinition[
     tools.push(...KNOWLEDGE_TOOLS);
   }
 
-  // Web search tools require 'web_search' capability
-  if (capabilities.includes(AVAILABLE_CAPABILITIES.WEB_SEARCH)) {
-    tools.push(...WEB_SEARCH_TOOLS);
-  }
+  // Note: web_search capability is handled via OpenRouter's :online plugin
+  // in drink-questions.ts, not as a custom tool
 
   return tools;
 }
@@ -383,10 +355,6 @@ export async function executeTool(
 
       case 'recall_facts':
         result = await executeRecallFacts(args, agentId);
-        break;
-
-      case 'web_search':
-        result = await executeWebSearch(args);
         break;
 
       default:
@@ -793,63 +761,6 @@ async function executeRecallFacts(
   } catch (error) {
     return JSON.stringify({
       error: `Failed to recall facts: ${(error as Error).message}`,
-    });
-  }
-}
-
-// ============ WEB SEARCH IMPLEMENTATION ============
-
-const TAVILY_API_KEY = process.env.TAVILY_API_KEY || '';
-
-async function executeWebSearch(
-  args: { query: string; max_results?: string }
-): Promise<string> {
-  const maxResults = Math.min(Math.max(parseInt(args.max_results || '3', 10) || 3, 1), 5);
-
-  if (!TAVILY_API_KEY) {
-    return JSON.stringify({
-      error: 'Web search is not configured. Set TAVILY_API_KEY environment variable.',
-    });
-  }
-
-  try {
-    console.log('[Tools] Web search:', args.query);
-
-    const res = await fetch('https://api.tavily.com/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        api_key: TAVILY_API_KEY,
-        query: args.query,
-        max_results: maxResults,
-        include_answer: true,
-        search_depth: 'basic',
-      }),
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      console.error('[Tools] Tavily API error:', res.status, text);
-      return JSON.stringify({ error: `Search failed: ${res.status}` });
-    }
-
-    const data = await res.json();
-
-    const results = (data.results || []).map((r: { title: string; url: string; content: string }) => ({
-      title: r.title,
-      url: r.url,
-      snippet: r.content?.slice(0, 300),
-    }));
-
-    return JSON.stringify({
-      answer: data.answer || null,
-      results,
-      query: args.query,
-    });
-  } catch (error) {
-    console.error('[Tools] Web search failed:', error);
-    return JSON.stringify({
-      error: `Web search failed: ${(error as Error).message}`,
     });
   }
 }

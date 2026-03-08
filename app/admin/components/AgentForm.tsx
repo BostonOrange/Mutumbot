@@ -12,7 +12,7 @@ import type { ModelInfo, InputModality } from '@/src/models';
 const AVAILABLE_CAPABILITIES = [
   { value: 'image_analysis', label: 'Image Analysis', desc: 'AI-analyze images in /tribute and @mentions. Requires model with image input.' },
   { value: 'tribute_tracking', label: 'Tribute Tracking', desc: 'Enables /tribute, /tally, /demand commands and mention-based tribute scoring.' },
-  { value: 'web_search', label: 'Web Search', desc: 'AI can search the web via Tavily for real-time info, recipes, and facts.' },
+  { value: 'web_search', label: 'Web Search', desc: 'Enables real-time web search via OpenRouter (:online plugin). Extra cost per query.' },
   { value: 'scheduled_messages', label: 'Scheduled Messages', desc: 'AI can create/manage cron events (reminders, auto-messages, AI prompts).' },
   { value: 'random_facts', label: 'Random Facts', desc: 'Enables the /drink random command for tiki and cocktail trivia.' },
   { value: 'content_moderation', label: 'Content Moderation', desc: 'Filter and moderate user messages. (Coming soon)' },
@@ -30,7 +30,7 @@ const CUSTOM_TOOL_SETS: { capability: string | null; label: string; tools: strin
   { capability: null, label: 'Always Available', tools: ['list_channels'] },
   { capability: 'scheduled_messages', label: 'Scheduled Messages', tools: ['create_scheduled_event', 'list_scheduled_events', 'update_scheduled_event', 'delete_scheduled_event'] },
   { capability: 'knowledge', label: 'Knowledge', tools: ['remember_fact', 'recall_facts'] },
-  { capability: 'web_search', label: 'Web Search', tools: ['web_search'] },
+  { capability: 'web_search', label: 'Web Search (OpenRouter)', tools: ['model:online (built-in)'] },
 ];
 
 const DEFAULT_MODEL = 'google/gemini-2.5-flash-lite';

@@ -345,7 +345,11 @@ Use recall_facts to search your memory when you need specific information.`;
   messages.push({ role: 'user', content: question });
 
   // Use agent's model or fall back to default
-  const model = config.agent.model || DEFAULT_MODEL;
+  // Append :online for OpenRouter web search when capability is enabled
+  const baseModel = config.agent.model || DEFAULT_MODEL;
+  const model = config.agent.capabilities.includes('web_search')
+    ? `${baseModel}:online`
+    : baseModel;
   const params = config.agent.params || {};
 
   // Make the API call with tools if available
