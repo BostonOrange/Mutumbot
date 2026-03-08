@@ -21,6 +21,7 @@ const NAV_LINKS = [
   { href: '/admin/conversations', label: 'Conversations' },
   { href: '/admin/knowledge', label: 'Knowledge' },
   { href: '/admin/memories', label: 'User Memories' },
+  { href: '/admin/playground', label: 'Playground' },
   { href: '/admin/diagnostics', label: 'Diagnostics' },
 ] as const;
 
