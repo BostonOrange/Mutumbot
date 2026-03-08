@@ -31,10 +31,6 @@ const result: NextAuthResult = NextAuth({
       return session;
     },
   },
-  pages: {
-    signIn: '/api/auth/signin',
-    error: '/api/auth/error',
-  },
   secret: process.env.NEXTAUTH_SECRET,
   trustHost: true,
 });
