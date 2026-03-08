@@ -8,6 +8,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { getToolsForCapabilities } from '../src/services/tools';
+import { parseCapabilities } from '../src/services/agents';
 
 describe('getToolsForCapabilities', () => {
   it('should always include Discord tools (list_channels)', () => {
@@ -111,5 +112,51 @@ describe('getToolsForCapabilities', () => {
       const names = tools.map(t => t.function.name);
       expect(names).toContain('list_channels');
     });
+  });
+});
+
+describe('parseCapabilities', () => {
+  it('should parse a normal string array', () => {
+    expect(parseCapabilities(['image_analysis', 'knowledge'])).toEqual(['image_analysis', 'knowledge']);
+  });
+
+  it('should flatten a double-serialized JSON array element', () => {
+    // This is the corruption case: JSON.stringify produced a string element
+    const corrupted = ['["image_analysis","scheduled_messages","knowledge"]', 'tribute_tracking'];
+    const result = parseCapabilities(corrupted);
+    expect(result).toContain('image_analysis');
+    expect(result).toContain('scheduled_messages');
+    expect(result).toContain('knowledge');
+    expect(result).toContain('tribute_tracking');
+  });
+
+  it('should deduplicate after flattening', () => {
+    // knowledge appears both inside the stringified array and as a separate element
+    const corrupted = ['["image_analysis","knowledge"]', 'knowledge', 'web_search'];
+    const result = parseCapabilities(corrupted);
+    const knowledgeCount = result.filter(c => c === 'knowledge').length;
+    expect(knowledgeCount).toBe(1);
+    expect(result).toContain('image_analysis');
+    expect(result).toContain('web_search');
+  });
+
+  it('should return empty array for null/undefined', () => {
+    expect(parseCapabilities(null)).toEqual([]);
+    expect(parseCapabilities(undefined)).toEqual([]);
+  });
+
+  it('should return empty array for non-array values', () => {
+    expect(parseCapabilities('string')).toEqual([]);
+    expect(parseCapabilities(42)).toEqual([]);
+    expect(parseCapabilities({})).toEqual([]);
+  });
+
+  it('should skip non-string elements', () => {
+    expect(parseCapabilities([123, null, 'knowledge'])).toEqual(['knowledge']);
+  });
+
+  it('should not treat regular strings starting with [ as JSON', () => {
+    // A string like "[broken" is not valid JSON — should be kept as-is
+    expect(parseCapabilities(['[broken', 'knowledge'])).toEqual(['[broken', 'knowledge']);
   });
 });

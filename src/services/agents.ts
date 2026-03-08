@@ -943,7 +943,7 @@ export async function resolveConfigWithDefaults(
  * Parse capabilities from DB, handling potential double-serialization corruption
  * where a stringified JSON array ends up as one element of the outer array.
  */
-function parseCapabilities(raw: unknown): string[] {
+export function parseCapabilities(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   const caps: string[] = [];
   for (const item of raw) {
