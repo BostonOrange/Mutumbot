@@ -54,9 +54,15 @@ const SYSTEM_TESTS = [
 const AGENT_TESTS = [
   { id: 'agent_resolution', label: 'Agent Resolution', description: 'Resolve agent config, prompt, capabilities, tools' },
   { id: 'basic_response', label: 'Basic AI Response', description: 'Send a test prompt and get a response' },
-  { id: 'tool_calling', label: 'Tool Calling', description: 'Verify the agent can invoke tools' },
+  { id: 'tool_calling', label: 'Tool Calling', description: 'Verify the agent can suggest tool calls' },
+  { id: 'tool_execution', label: 'Tool Execution Loop', description: 'Full tool call \u2192 execute \u2192 result loop' },
+  { id: 'web_search', label: 'Web Search (:online)', description: 'Test OpenRouter web search plugin with live query' },
+  { id: 'image_analysis', label: 'Image Analysis', description: 'Send a test image for AI vision analysis' },
   { id: 'knowledge', label: 'Knowledge Storage', description: 'Write and read back a test fact' },
+  { id: 'scheduled_events', label: 'Scheduled Events', description: 'Create, read, and delete a test event' },
   { id: 'message_ingestion', label: 'Message Ingestion', description: 'Check message pipeline stats' },
+  { id: 'user_memory', label: 'User Memory', description: 'Check user memory system stats' },
+  { id: 'capability_gating', label: 'Capability Gating', description: 'Verify tools are correctly gated by capabilities' },
 ];
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
@@ -365,7 +371,7 @@ export default function DiagnosticsPage() {
                 <button
                   type="button"
                   onClick={() => runSingleTest(test.id)}
-                  disabled={running || (!selectedAgentId && test.id !== 'message_ingestion')}
+                  disabled={running || (!selectedAgentId && !['message_ingestion', 'user_memory', 'capability_gating'].includes(test.id))}
                   className="shrink-0 rounded px-2.5 py-1 text-xs font-medium text-gray-400 hover:text-gray-100 bg-gray-800 hover:bg-gray-700 border border-gray-700 disabled:opacity-40 transition-colors"
                 >
                   Run

@@ -1,8 +1,15 @@
 import { auth } from '@/lib/auth';
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@/src/db';
-import { getAgents, resolveConfigWithDefaults } from '@/src/services/agents';
-import { getToolsForCapabilities } from '@/src/services/tools';
+import {
+  getAgents,
+  resolveConfigWithDefaults,
+  createScheduledEvent,
+  deleteScheduledEvent,
+  getScheduledEvents,
+  EventType,
+} from '@/src/services/agents';
+import { getToolsForCapabilities, executeTool, ToolCall } from '@/src/services/tools';
 import { SAFETY_GUARDRAILS } from '@/src/personality';
 import OpenAI from 'openai';
 
@@ -339,6 +346,260 @@ async function testMessageIngestion(): Promise<string[]> {
   ];
 }
 
+// ─── New capability tests ─────────────────────────────────────────────────────
+
+async function testWebSearch(agentId: string): Promise<string[]> {
+  const agents = await getAgents();
+  const agent = agents.find((a) => a.id === agentId);
+  if (!agent) throw new Error(`Agent ${agentId} not found`);
+
+  if (!agent.capabilities.includes('web_search')) {
+    return [`Agent: ${agent.name}`, `web_search capability not enabled — skipping`];
+  }
+
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error('OPENROUTER_API_KEY not set');
+
+  const onlineModel = `${agent.model}:online`;
+  const openrouter = new OpenAI({ baseURL: 'https://openrouter.ai/api/v1', apiKey });
+
+  const response = await openrouter.chat.completions.create({
+    model: onlineModel,
+    messages: [
+      { role: 'user', content: "What is today's date? Reply with just the date." },
+    ],
+    max_tokens: 100,
+  });
+
+  const reply = response.choices?.[0]?.message?.content ?? '(empty)';
+  return [
+    `Agent: ${agent.name}`,
+    `Model: ${onlineModel}`,
+    `Prompt: "What is today's date?"`,
+    `Response: "${reply.trim()}"`,
+    `Tokens: ${response.usage?.prompt_tokens ?? '?'} prompt + ${response.usage?.completion_tokens ?? '?'} completion`,
+    `Web search (:online plugin) is working.`,
+  ];
+}
+
+async function testImageAnalysis(agentId: string): Promise<string[]> {
+  const agents = await getAgents();
+  const agent = agents.find((a) => a.id === agentId);
+  if (!agent) throw new Error(`Agent ${agentId} not found`);
+
+  if (!agent.capabilities.includes('image_analysis')) {
+    return [`Agent: ${agent.name}`, `image_analysis capability not enabled — skipping`];
+  }
+
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error('OPENROUTER_API_KEY not set');
+
+  const openrouter = new OpenAI({ baseURL: 'https://openrouter.ai/api/v1', apiKey });
+
+  const testImageUrl =
+    'https://upload.wikimedia.org/wikipedia/commons/thumb/6/6d/Good_Food_Display_-_NCI_Visuals_Online.jpg/220px-Good_Food_Display_-_NCI_Visuals_Online.jpg';
+
+  const response = await openrouter.chat.completions.create({
+    model: agent.model,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Describe this image in one sentence.' },
+          { type: 'image_url', image_url: { url: testImageUrl } },
+        ],
+      },
+    ],
+    max_tokens: 150,
+  });
+
+  const reply = response.choices?.[0]?.message?.content ?? '(empty)';
+  return [
+    `Agent: ${agent.name}`,
+    `Model: ${agent.model}`,
+    `Test image: food display (Wikipedia commons)`,
+    `Description: "${reply.trim()}"`,
+    `Tokens: ${response.usage?.prompt_tokens ?? '?'} prompt + ${response.usage?.completion_tokens ?? '?'} completion`,
+    `Image analysis is working.`,
+  ];
+}
+
+async function testScheduledEvents(agentId: string): Promise<string[]> {
+  const agents = await getAgents();
+  const agent = agents.find((a) => a.id === agentId);
+  if (!agent) throw new Error(`Agent ${agentId} not found`);
+
+  if (!agent.capabilities.includes('scheduled_messages')) {
+    return [`Agent: ${agent.name}`, `scheduled_messages capability not enabled — skipping`];
+  }
+
+  const testEvent = await createScheduledEvent(
+    '__diagnostics_test__',
+    'test:diagnostics:channel',
+    '0 0 31 2 *',
+    'custom_message' as EventType,
+    {
+      description: 'Diagnostics test event — safe to delete',
+      payload: { message: 'Test message from diagnostics' },
+      timezone: 'UTC',
+    }
+  );
+
+  const events = await getScheduledEvents({ threadId: 'test:diagnostics:channel' });
+  const found = events.find((e) => e.id === testEvent.id);
+
+  await deleteScheduledEvent(testEvent.id);
+
+  const afterDelete = await getScheduledEvents({ threadId: 'test:diagnostics:channel' });
+  const stillExists = afterDelete.find((e) => e.id === testEvent.id);
+
+  return [
+    `Agent: ${agent.name}`,
+    `Create test: ${testEvent.id ? 'OK' : 'FAILED'}`,
+    `Read-back test: ${found ? 'OK' : 'FAILED'}`,
+    `Delete test: ${!stillExists ? 'OK' : 'FAILED (event still exists)'}`,
+    `Scheduled events CRUD is working.`,
+  ];
+}
+
+async function testToolExecution(agentId: string): Promise<string[]> {
+  const agents = await getAgents();
+  const agent = agents.find((a) => a.id === agentId);
+  if (!agent) throw new Error(`Agent ${agentId} not found`);
+
+  const tools = getToolsForCapabilities(agent.capabilities);
+  if (tools.length === 0) {
+    return [`Agent: ${agent.name}`, `No tools available — skipping`];
+  }
+
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error('OPENROUTER_API_KEY not set');
+
+  let systemPrompt = SAFETY_GUARDRAILS + '\n\n' + agent.systemPrompt;
+  if (agent.customInstructions) systemPrompt += '\n\n' + agent.customInstructions;
+
+  const openrouter = new OpenAI({ baseURL: 'https://openrouter.ai/api/v1', apiKey });
+
+  const response = await openrouter.chat.completions.create({
+    model: agent.model,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: 'List the available Discord channels.' },
+    ],
+    temperature: agent.params.temperature,
+    max_tokens: 500,
+    tools: tools.map((t) => ({ type: 'function' as const, function: t.function })),
+    tool_choice: 'auto',
+  });
+
+  const message = response.choices?.[0]?.message;
+  const toolCalls = message?.tool_calls ?? [];
+  const details: string[] = [
+    `Agent: ${agent.name}`,
+    `Available tools: ${tools.map((t) => t.function.name).join(', ')}`,
+  ];
+
+  if (toolCalls.length === 0) {
+    details.push(`Model did not suggest any tool calls.`);
+    if (message?.content) details.push(`Response: "${message.content.trim().slice(0, 200)}"`);
+    return details;
+  }
+
+  details.push(`Tool calls suggested: ${toolCalls.length}`);
+
+  for (const tc of toolCalls) {
+    const fn = (tc as ToolCall).function;
+    if (!fn) continue;
+
+    details.push(``, `\u2192 ${fn.name}(${fn.arguments})`);
+    try {
+      const toolResult = await executeTool(tc as ToolCall, 'test:diagnostics', agent.capabilities, agent.id);
+      const resultSnippet = toolResult.content.slice(0, 300);
+      details.push(`  Result: ${resultSnippet}${toolResult.content.length > 300 ? '...' : ''}`);
+    } catch (err) {
+      details.push(`  Execution failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  details.push(``, `Full tool execution loop completed.`);
+  return details;
+}
+
+async function testUserMemory(): Promise<string[]> {
+  if (!sql) throw new Error('Database not available');
+
+  const tables = await sql`
+    SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'user_memories'
+  `;
+  if (tables.length === 0) {
+    return [`user_memories table not found — memory system not initialized`];
+  }
+
+  const totalMemories = await sql`SELECT COUNT(*)::int AS count FROM user_memories`;
+  const recentMemories = await sql`
+    SELECT COUNT(*)::int AS count FROM user_memories
+    WHERE last_updated_at > NOW() - INTERVAL '24 hours'
+  `;
+
+  const topUsers = await sql`
+    SELECT user_id, channel_id, message_count, LENGTH(summary) as summary_length
+    FROM user_memories
+    ORDER BY last_updated_at DESC
+    LIMIT 5
+  `;
+
+  const details = [
+    `Total user memories: ${totalMemories[0].count}`,
+    `Updated in last 24h: ${recentMemories[0].count}`,
+  ];
+
+  if (topUsers.length > 0) {
+    details.push(``, `Recent memories:`);
+    for (const row of topUsers) {
+      details.push(
+        `  User ${row.user_id} in ${row.channel_id}: ${row.message_count} msgs, ${row.summary_length} char summary`
+      );
+    }
+  }
+
+  return details;
+}
+
+async function testCapabilityGating(): Promise<string[]> {
+  const details: string[] = [];
+
+  const noCapTools = getToolsForCapabilities([]);
+  const baseToolNames = noCapTools.map((t) => t.function.name);
+  details.push(`No capabilities \u2192 ${noCapTools.length} tools: ${baseToolNames.join(', ')}`);
+
+  const schedulingTools = getToolsForCapabilities(['scheduled_messages']);
+  const schedulingNames = schedulingTools
+    .map((t) => t.function.name)
+    .filter((n) => !baseToolNames.includes(n));
+  details.push(`scheduled_messages \u2192 adds: ${schedulingNames.join(', ') || 'none'}`);
+
+  const knowledgeTools = getToolsForCapabilities(['knowledge']);
+  const knowledgeNames = knowledgeTools
+    .map((t) => t.function.name)
+    .filter((n) => !baseToolNames.includes(n));
+  details.push(`knowledge \u2192 adds: ${knowledgeNames.join(', ') || 'none'}`);
+
+  const allCapTools = getToolsForCapabilities(['scheduled_messages', 'knowledge', 'web_search', 'image_analysis']);
+  details.push(`All capabilities \u2192 ${allCapTools.length} total tools`);
+
+  const webTools = getToolsForCapabilities(['web_search']);
+  const webOnlyNames = webTools.map((t) => t.function.name).filter((n) => !baseToolNames.includes(n));
+  details.push(
+    `web_search \u2192 adds: ${
+      webOnlyNames.length === 0
+        ? 'none (correct \u2014 uses :online plugin)'
+        : webOnlyNames.join(', ') + ' (unexpected!)'
+    }`
+  );
+
+  return details;
+}
+
 // ─── POST handler ─────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
@@ -402,6 +663,40 @@ export async function POST(request: NextRequest) {
           } else {
             results.push(await runTest('Custom Prompt', () => testAiResponse(agentId, customPrompt)));
           }
+          break;
+        case 'web_search':
+          if (!agentId) {
+            results.push({ name: 'Web Search (:online)', status: 'skip', durationMs: 0, details: ['No agent selected'] });
+          } else {
+            results.push(await runTest('Web Search (:online)', () => testWebSearch(agentId)));
+          }
+          break;
+        case 'image_analysis':
+          if (!agentId) {
+            results.push({ name: 'Image Analysis', status: 'skip', durationMs: 0, details: ['No agent selected'] });
+          } else {
+            results.push(await runTest('Image Analysis', () => testImageAnalysis(agentId)));
+          }
+          break;
+        case 'scheduled_events':
+          if (!agentId) {
+            results.push({ name: 'Scheduled Events CRUD', status: 'skip', durationMs: 0, details: ['No agent selected'] });
+          } else {
+            results.push(await runTest('Scheduled Events CRUD', () => testScheduledEvents(agentId)));
+          }
+          break;
+        case 'tool_execution':
+          if (!agentId) {
+            results.push({ name: 'Tool Execution Loop', status: 'skip', durationMs: 0, details: ['No agent selected'] });
+          } else {
+            results.push(await runTest('Tool Execution Loop', () => testToolExecution(agentId)));
+          }
+          break;
+        case 'user_memory':
+          results.push(await runTest('User Memory', testUserMemory));
+          break;
+        case 'capability_gating':
+          results.push(await runTest('Capability Gating', testCapabilityGating));
           break;
       }
     }

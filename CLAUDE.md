@@ -20,9 +20,9 @@ npm run gateway:build    # Compile gateway to dist/ (tsc --project tsconfig.gate
 npm run gateway:start    # Run compiled gateway (production)
 npm run register         # Register slash commands with Discord API
 npm run lint             # ESLint
+npm run test             # Run unit tests (vitest)
+npm run test:watch       # Run tests in watch mode
 ```
-
-There is no test framework configured. No test files exist.
 
 ## Architecture
 
@@ -88,6 +88,36 @@ Web dashboard at `/admin` for managing agents, workflows, channel assignments, k
 | `/admin/channels` | Assign workflows to Discord channels |
 | `/admin/knowledge` | Browse/search/delete agent knowledge facts |
 | `/admin/memories` | Browse user memory summaries |
+| `/admin/events` | Manage scheduled cron events (create/edit/pause/delete) |
+| `/admin/diagnostics` | Run system health checks and end-to-end AI tests |
+
+## Testing
+
+### Unit Tests (Vitest)
+
+73 unit tests in `tests/` covering pure functions that don't need DB/API:
+
+| File | Tests | What it covers |
+|---|---|---|
+| `tools.test.ts` | 10 | Capability gating: correct tools for each capability set |
+| `personality.test.ts` | 19 | Safety guardrails text, emoji format, phrase helpers |
+| `formatters.test.ts` | 17 | Personal stats and leaderboard rendering |
+| `models.test.ts` | 15 | Model registry integrity, required fields, unique IDs |
+| `drink-questions.test.ts` | 12 | Tribute scores, drink list output |
+
+Run with `npm test`. The DB warning (`DATABASE_URL not set`) in stderr is expected and harmless — the import chain is safe without a database connection.
+
+**When adding new features**: Add tests for any new pure functions or capability gating changes. If a new capability adds tools, add a test in `tools.test.ts`.
+
+### Diagnostics (Admin Dashboard)
+
+Live end-to-end testing at `/admin/diagnostics`. Runs against real services (DB, Discord, OpenRouter). Tests:
+
+- **System**: Database connection, Discord API, OpenRouter API
+- **Agent**: Resolution, basic AI response, tool calling, full tool execution loop, web search (`:online`), image analysis, knowledge CRUD, scheduled events CRUD, message ingestion stats, user memory stats, capability gating verification
+- **Custom**: User-provided prompts against any agent
+
+Results output as a copyable log.
 
 ## Environment Variables
 
