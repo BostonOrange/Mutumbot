@@ -297,7 +297,8 @@ async function chatWithOpenRouter(
   }
 
   // Get tools available to this agent based on capabilities
-  const tools = getToolsForCapabilities(config.agent.capabilities);
+  const isDM = threadId?.includes(':dm:') ?? false;
+  const tools = getToolsForCapabilities(config.agent.capabilities, { isDM });
   if (tools.length > 0) {
     systemPrompt += `\n\n--- AVAILABLE TOOLS ---
 You have access to tools for managing scheduled events. Use them when users ask to:

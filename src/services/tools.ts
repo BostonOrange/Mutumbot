@@ -290,12 +290,19 @@ export const KNOWLEDGE_TOOLS: ToolDefinition[] = [
 
 /**
  * Get tools available to an agent based on its capabilities
+ * @param capabilities - Agent's enabled capabilities
+ * @param options.isDM - If true, exclude guild-only tools (e.g. list_channels)
  */
-export function getToolsForCapabilities(capabilities: string[]): ToolDefinition[] {
+export function getToolsForCapabilities(
+  capabilities: string[],
+  options?: { isDM?: boolean }
+): ToolDefinition[] {
   const tools: ToolDefinition[] = [];
 
-  // Discord info tools - always available for channel lookups
-  tools.push(...DISCORD_TOOLS);
+  // Discord info tools - only available in guild context (not DMs)
+  if (!options?.isDM) {
+    tools.push(...DISCORD_TOOLS);
+  }
 
   // Scheduling tools require 'scheduled_messages' capability
   if (capabilities.includes(AVAILABLE_CAPABILITIES.SCHEDULED_MESSAGES)) {

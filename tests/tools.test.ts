@@ -80,4 +80,36 @@ describe('getToolsForCapabilities', () => {
     const tools = getToolsForCapabilities([]);
     expect(tools.length).toBeGreaterThan(0);
   });
+
+  describe('DM context (isDM option)', () => {
+    it('should exclude list_channels in DM context', () => {
+      const tools = getToolsForCapabilities([], { isDM: true });
+      const names = tools.map(t => t.function.name);
+      expect(names).not.toContain('list_channels');
+    });
+
+    it('should still include knowledge tools in DM context', () => {
+      const tools = getToolsForCapabilities(['knowledge'], { isDM: true });
+      const names = tools.map(t => t.function.name);
+      expect(names).toContain('remember_fact');
+      expect(names).toContain('recall_facts');
+    });
+
+    it('should still include scheduling tools in DM context', () => {
+      const tools = getToolsForCapabilities(['scheduled_messages'], { isDM: true });
+      const names = tools.map(t => t.function.name);
+      expect(names).toContain('create_scheduled_event');
+    });
+
+    it('should return no tools when DM with no capabilities', () => {
+      const tools = getToolsForCapabilities([], { isDM: true });
+      expect(tools.length).toBe(0);
+    });
+
+    it('should include list_channels when isDM is false', () => {
+      const tools = getToolsForCapabilities([], { isDM: false });
+      const names = tools.map(t => t.function.name);
+      expect(names).toContain('list_channels');
+    });
+  });
 });
