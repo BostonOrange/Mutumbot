@@ -832,7 +832,7 @@ export async function getThreadWorkflow(threadId: string): Promise<Workflow | nu
 /**
  * Compose the final system prompt from safety guardrails + agent config
  */
-function composeSystemPrompt(agent: Agent, workflow: Workflow): string {
+export function composeSystemPrompt(agent: Agent, workflow: Workflow): string {
   const parts: string[] = [];
 
   // 1. SAFETY_GUARDRAILS - always first, cannot be overridden

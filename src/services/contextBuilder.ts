@@ -191,7 +191,7 @@ async function fetchCandidateMessages(channelId: string): Promise<ContextMessage
 
 // ============ STEP B: NORMALIZE MESSAGES ============
 
-function normalizeMessage(message: ContextMessage): ContextMessage {
+export function normalizeMessage(message: ContextMessage): ContextMessage {
   let content = message.content;
 
   // Replace <@id> mentions with @Name (we don't have lookup, keep raw for now)
@@ -227,7 +227,7 @@ function normalizeMessage(message: ContextMessage): ContextMessage {
 
 // ============ STEP C: SELECT BEST MESSAGES ============
 
-function selectBestMessages(
+export function selectBestMessages(
   candidates: ContextMessage[],
   triggerMessageId: string,
   targetCount: number = CONFIG.TARGET_MESSAGES
@@ -280,7 +280,7 @@ function orderByTime(messages: ContextMessage[]): ContextMessage[] {
   return [...messages].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 }
 
-function formatTranscript(messages: ContextMessage[]): string {
+export function formatTranscript(messages: ContextMessage[]): string {
   return messages.map(msg => {
     const time = formatTime(msg.createdAt);
     const indicators: string[] = [];
@@ -296,7 +296,7 @@ function formatTranscript(messages: ContextMessage[]): string {
   }).join('\n');
 }
 
-function formatTime(date: Date): string {
+export function formatTime(date: Date): string {
   return date.toLocaleTimeString('en-US', {
     hour: '2-digit',
     minute: '2-digit',
@@ -306,7 +306,7 @@ function formatTime(date: Date): string {
 
 // ============ STEP E: LENGTH BUDGET ============
 
-function applyLengthBudget(transcript: string, maxChars: number = CONFIG.MAX_TRANSCRIPT_CHARS): string {
+export function applyLengthBudget(transcript: string, maxChars: number = CONFIG.MAX_TRANSCRIPT_CHARS): string {
   if (transcript.length <= maxChars) {
     return transcript;
   }

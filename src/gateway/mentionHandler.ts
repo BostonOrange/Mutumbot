@@ -192,7 +192,7 @@ export async function handleMentionMessage(message: Message): Promise<Message | 
 /**
  * Check if the message is asking about tribute status
  */
-function isStatusQuery(content: string): boolean {
+export function isStatusQuery(content: string): boolean {
   const statusKeywords = [
     'tribute status', 'friday status', 'who has offered', 'who has tributed',
     'offerings today', 'friday offerings', 'friday tributes',
@@ -204,7 +204,7 @@ function isStatusQuery(content: string): boolean {
 /**
  * Check if the message is asking about personal stats
  */
-function isPersonalStatsQuery(content: string): boolean {
+export function isPersonalStatsQuery(content: string): boolean {
   const personalKeywords = [
     'my stats', 'my score', 'my tributes', 'my tally', 'my devotion',
     'how much have i', 'how many have i', 'how many tributes',
@@ -216,7 +216,7 @@ function isPersonalStatsQuery(content: string): boolean {
 /**
  * Check if the message is asking about the leaderboard
  */
-function isLeaderboardQuery(content: string): boolean {
+export function isLeaderboardQuery(content: string): boolean {
   const leaderboardKeywords = [
     'leaderboard', 'top tributes', 'rankings', 'who is winning',
     'who\'s winning', 'who is leading', 'who\'s leading', 'best devoted',
@@ -229,7 +229,7 @@ function isLeaderboardQuery(content: string): boolean {
  * Check if the message relates to tributes/scores/data and needs database context
  * This avoids injecting tribute data into unrelated conversations
  */
-function needsTributeContext(content: string): boolean {
+export function needsTributeContext(content: string): boolean {
   const tributeKeywords = [
     'tribute', 'score', 'tally', 'points', 'pts',
     'devotion', 'offering', 'rank', 'ranking',

@@ -13,6 +13,16 @@ import {
   processIseeMarkers,
   isTikiRelated,
   TRIBUTE_DEMAND_PHRASES,
+  TRIBUTE_RECEIVED_PHRASES,
+  TIKI_TRIBUTE_PHRASES,
+  NOT_FRIDAY_PHRASES,
+  NO_TRIBUTES_PHRASES,
+  TRIBUTES_RECEIVED_STATUS,
+  DEFAULT_MUTUMBOT_PERSONA,
+  SENSEI_MUTUM_PERSONA,
+  SPACE_TRAVELER_PERSONA,
+  MUTUMBOT_AWAKENING,
+  SPACE_TRAVELER_AWAKENING,
 } from '../src/personality';
 
 describe('SAFETY_GUARDRAILS', () => {
@@ -117,5 +127,61 @@ describe('isTikiRelated', () => {
 
   it('should return false for an empty string', () => {
     expect(isTikiRelated('')).toBe(false);
+  });
+});
+
+// ============ Phrase arrays ============
+
+describe('phrase arrays', () => {
+  const arrays: Array<[string, string[]]> = [
+    ['TRIBUTE_DEMAND_PHRASES', TRIBUTE_DEMAND_PHRASES],
+    ['TRIBUTE_RECEIVED_PHRASES', TRIBUTE_RECEIVED_PHRASES],
+    ['TIKI_TRIBUTE_PHRASES', TIKI_TRIBUTE_PHRASES],
+    ['NOT_FRIDAY_PHRASES', NOT_FRIDAY_PHRASES],
+    ['NO_TRIBUTES_PHRASES', NO_TRIBUTES_PHRASES],
+    ['TRIBUTES_RECEIVED_STATUS', TRIBUTES_RECEIVED_STATUS],
+  ];
+
+  it('all phrase arrays are non-empty', () => {
+    for (const [name, arr] of arrays) {
+      expect(arr.length, `${name} should have at least one phrase`).toBeGreaterThan(0);
+    }
+  });
+
+  it('every entry in every phrase array is a non-empty string', () => {
+    for (const [name, arr] of arrays) {
+      for (let i = 0; i < arr.length; i++) {
+        expect(typeof arr[i], `${name}[${i}] should be a string`).toBe('string');
+        expect(arr[i].length, `${name}[${i}] should be non-empty`).toBeGreaterThan(0);
+      }
+    }
+  });
+});
+
+// ============ Persona string constants ============
+
+describe('persona constants', () => {
+  const constants: Array<[string, string]> = [
+    ['DEFAULT_MUTUMBOT_PERSONA', DEFAULT_MUTUMBOT_PERSONA],
+    ['SENSEI_MUTUM_PERSONA', SENSEI_MUTUM_PERSONA],
+    ['SPACE_TRAVELER_PERSONA', SPACE_TRAVELER_PERSONA],
+    ['MUTUMBOT_AWAKENING', MUTUMBOT_AWAKENING],
+    ['SPACE_TRAVELER_AWAKENING', SPACE_TRAVELER_AWAKENING],
+  ];
+
+  it('all persona constants are non-empty strings', () => {
+    for (const [name, value] of constants) {
+      expect(typeof value, `${name} should be a string`).toBe('string');
+      expect(value.trim().length, `${name} should be non-empty`).toBeGreaterThan(0);
+    }
+  });
+
+  it('DEFAULT_MUTUMBOT_PERSONA describes the tiki entity character', () => {
+    expect(DEFAULT_MUTUMBOT_PERSONA).toContain('MUTUMBOT');
+    expect(DEFAULT_MUTUMBOT_PERSONA.toLowerCase()).toContain('tiki');
+  });
+
+  it('SENSEI_MUTUM_PERSONA describes the sensei character', () => {
+    expect(SENSEI_MUTUM_PERSONA).toContain('Sensei Mutum');
   });
 });
