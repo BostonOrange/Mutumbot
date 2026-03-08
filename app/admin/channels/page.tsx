@@ -8,9 +8,9 @@ import { useState, useEffect, useCallback } from 'react';
 
 interface ChannelRow {
   thread_id: string;
-  workflow_id: string;
-  workflow_name: string;
-  agent_name: string;
+  workflow_id: string | null;
+  workflow_name: string | null;
+  agent_name: string | null;
 }
 
 interface Workflow {
@@ -124,11 +124,11 @@ function AssignedRow({
   onUpdate: (threadId: string, workflowId: string, resetHistory: boolean) => Promise<void>;
   actionStatus: ActionStatus;
 }) {
-  const [selectedWorkflowId, setSelectedWorkflowId] = useState(row.workflow_id);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState(row.workflow_id ?? workflows[0]?.id ?? '');
   const [resetHistory, setResetHistory] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const isDirty = selectedWorkflowId !== row.workflow_id || resetHistory;
+  const isDirty = selectedWorkflowId !== (row.workflow_id ?? '') || resetHistory;
   const isThisRowStatus = actionStatus?.threadId === row.thread_id;
 
   async function handleUpdate() {
@@ -155,7 +155,11 @@ function AssignedRow({
 
       {/* Agent */}
       <td className="py-3 px-4 align-top">
-        <span className="text-sm text-gray-300">{row.agent_name ?? '—'}</span>
+        {row.workflow_id ? (
+          <span className="text-sm text-gray-300">{row.agent_name ?? '—'}</span>
+        ) : (
+          <span className="text-xs text-amber-400 italic">Unassigned (uses default)</span>
+        )}
       </td>
 
       {/* Workflow dropdown */}
@@ -452,7 +456,7 @@ export default function ChannelsPage() {
           id="assigned-heading"
           className="text-base font-semibold text-gray-200 mb-4"
         >
-          Assigned Channels
+          Known Channels
         </h3>
 
         {loading ? (

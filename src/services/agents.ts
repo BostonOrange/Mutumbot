@@ -14,7 +14,7 @@
  */
 
 import { sql } from '../db';
-import { SAFETY_GUARDRAILS, DEFAULT_MUTUMBOT_PERSONA } from '../personality';
+import { SAFETY_GUARDRAILS, DEFAULT_MUTUMBOT_PERSONA, SENSEI_MUTUM_PERSONA, SPACE_TRAVELER_PERSONA } from '../personality';
 import { resetThread } from './threads';
 
 // ============ TYPES ============
@@ -360,12 +360,12 @@ async function ensureDefaults(): Promise<void> {
   const defaultCapabilities = ['image_analysis', 'tribute_tracking', 'scheduled_messages', 'knowledge'];
 
   if (existingAgent.length === 0) {
-    // Create default agent with the sensei persona (stored in DB, not hardcoded)
+    // Create default agent with the original Mutumbot tiki entity persona
     const result = await sql`
       INSERT INTO agents (name, description, system_prompt, custom_instructions, capabilities, model, params, is_default)
       VALUES (
-        'Sensei Mutum',
-        'Wise sensei with anime waifu energy — the default Mutumbot persona',
+        'Mutumbot',
+        'Ancient ominous tiki entity — the original Mutumbot persona',
         ${DEFAULT_MUTUMBOT_PERSONA},
         NULL,
         ${JSON.stringify(defaultCapabilities)},
@@ -376,25 +376,76 @@ async function ensureDefaults(): Promise<void> {
       RETURNING id
     `;
     defaultAgentId = result[0].id as string;
-    console.log('[Agents] Created default agent with sensei persona:', defaultAgentId);
+    console.log('[Agents] Created default agent (Mutumbot):', defaultAgentId);
   } else {
     defaultAgentId = existingAgent[0].id as string;
-    // Migrate the default agent to the new sensei persona unless it has already been
-    // set up as "Sensei Mutum". This covers the old tiki "Mutumbot Default" persona,
-    // any custom interim persona (e.g. "space traveler"), and other outdated defaults.
-    const agentRow = await sql`SELECT name FROM agents WHERE id = ${defaultAgentId}`;
-    const agentName = agentRow[0]?.name as string | undefined;
-    if (agentName !== 'Sensei Mutum') {
-      await sql`
-        UPDATE agents SET
-          name = 'Sensei Mutum',
-          description = 'Wise sensei with anime waifu energy — the default Mutumbot persona',
-          system_prompt = ${DEFAULT_MUTUMBOT_PERSONA},
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ${defaultAgentId}
-      `;
-      console.log('[Agents] Migrated default agent to sensei persona (was:', agentName + '):', defaultAgentId);
+
+    // One-time migration: if the default agent was overwritten to "Sensei Mutum" by the
+    // old auto-migration, restore it to the original Mutumbot tiki persona.
+    // We know it's a one-time migration (not an admin choice) if no separate Sensei agent exists yet.
+    const separateSensei = await sql`
+      SELECT id FROM agents WHERE name = 'Sensei Mutum' AND is_default = FALSE LIMIT 1
+    `;
+    if (separateSensei.length === 0) {
+      const agentRow = await sql`SELECT name FROM agents WHERE id = ${defaultAgentId}`;
+      const agentName = agentRow[0]?.name as string | undefined;
+      if (agentName === 'Sensei Mutum') {
+        await sql`
+          UPDATE agents SET
+            name = 'Mutumbot',
+            description = 'Ancient ominous tiki entity — the original Mutumbot persona',
+            system_prompt = ${DEFAULT_MUTUMBOT_PERSONA},
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ${defaultAgentId}
+        `;
+        console.log('[Agents] Restored default agent to original Mutumbot tiki persona (was Sensei Mutum):', defaultAgentId);
+      }
     }
+    // After the separate Sensei agent exists, no further auto-overwrites — agents are managed via the dashboard.
+  }
+
+  // Ensure Sensei Mutum exists as a separate (non-default) agent
+  const existingSensei = await sql`
+    SELECT id FROM agents WHERE name = 'Sensei Mutum' LIMIT 1
+  `;
+  if (existingSensei.length === 0) {
+    const senseiResult = await sql`
+      INSERT INTO agents (name, description, system_prompt, custom_instructions, capabilities, model, params, is_default)
+      VALUES (
+        'Sensei Mutum',
+        'Wise anime sensei with warm energy — assignable to any channel',
+        ${SENSEI_MUTUM_PERSONA},
+        NULL,
+        ${JSON.stringify(defaultCapabilities)},
+        ${DEFAULT_MODEL},
+        ${JSON.stringify(DEFAULT_AGENT_PARAMS)},
+        FALSE
+      )
+      RETURNING id
+    `;
+    console.log('[Agents] Created Sensei Mutum agent:', senseiResult[0].id);
+  }
+
+  // Ensure Space Traveler exists as a separate (non-default) agent
+  const existingSpaceTraveler = await sql`
+    SELECT id FROM agents WHERE name = 'Space Traveler' LIMIT 1
+  `;
+  if (existingSpaceTraveler.length === 0) {
+    const spaceResult = await sql`
+      INSERT INTO agents (name, description, system_prompt, custom_instructions, capabilities, model, params, is_default)
+      VALUES (
+        'Space Traveler',
+        'Cosmic wanderer who speaks in mystic riddles — assignable to any channel',
+        ${SPACE_TRAVELER_PERSONA},
+        NULL,
+        ${JSON.stringify(defaultCapabilities)},
+        ${DEFAULT_MODEL},
+        ${JSON.stringify(DEFAULT_AGENT_PARAMS)},
+        FALSE
+      )
+      RETURNING id
+    `;
+    console.log('[Agents] Created Space Traveler agent:', spaceResult[0].id);
   }
 
   // Check if default workflow exists

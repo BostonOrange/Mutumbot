@@ -21,8 +21,7 @@ export async function GET() {
       FROM threads t
       LEFT JOIN workflows w ON t.workflow_id = w.id
       LEFT JOIN agents a ON w.agent_id = a.id
-      WHERE t.workflow_id IS NOT NULL
-      ORDER BY t.updated_at DESC
+      ORDER BY t.workflow_id IS NOT NULL DESC, t.updated_at DESC
     `;
 
     return NextResponse.json(rows);
