@@ -17,8 +17,9 @@ const NAV_LINKS = [
   { href: '/admin/agents', label: 'Agents' },
   { href: '/admin/workflows', label: 'Workflows' },
   { href: '/admin/channels', label: 'Channels' },
+  { href: '/admin/conversations', label: 'Conversations' },
   { href: '/admin/knowledge', label: 'Knowledge' },
-  { href: '/admin/memories', label: 'Memories' },
+  { href: '/admin/memories', label: 'User Memories' },
 ] as const;
 
 export default function Sidebar({ user }: SidebarProps) {

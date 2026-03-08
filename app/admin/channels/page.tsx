@@ -1,7 +1,8 @@
 'use client';
 
 // Usage: /admin/channels
-// Displays all known threads with Discord names, memory stats, and workflow assignments.
+// Displays all known threads with Discord names and workflow assignments.
+// Channel conversation history is on the separate /admin/conversations page.
 
 import { useState, useEffect, useCallback } from 'react';
 
@@ -12,10 +13,9 @@ interface ChannelRow {
   agent_name: string | null;
   guild_name: string | null;
   channel_name: string | null;
-  summary: string | null;
-  summary_updated_at: string | null;
-  updated_at: string | null;
+  dm_username: string | null;
   item_count: number;
+  updated_at: string | null;
 }
 
 interface Workflow {
@@ -27,15 +27,6 @@ interface Workflow {
 type ActionStatus = { type: 'success' | 'error'; message: string; threadId: string } | null;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function formatThreadIdShort(threadId: string): string {
-  const parts = threadId.split(':');
-  if (parts.length === 3 && parts[0] === 'discord') {
-    if (parts[1] === 'dm') return `DM: ${parts[2]}`;
-    return parts[2];
-  }
-  return threadId;
-}
 
 function formatRelativeTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -119,99 +110,6 @@ function WorkflowSelect({
   );
 }
 
-// ─── Memory / History panel ──────────────────────────────────────────────────
-
-interface ThreadItem {
-  id: string;
-  type: string;
-  role: string;
-  author_id: string | null;
-  author_name: string | null;
-  content: string;
-  created_at: string;
-}
-
-function MemoryPanel({ row }: { row: ChannelRow }) {
-  const [expanded, setExpanded] = useState(false);
-  const [historyItems, setHistoryItems] = useState<ThreadItem[] | null>(null);
-  const [historySummary, setHistorySummary] = useState<string | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
-
-  const hasSummary = !!row.summary;
-  const hasMemory = row.item_count > 0 || hasSummary;
-
-  if (!hasMemory) {
-    return <span className="text-xs text-gray-600 italic">No memory</span>;
-  }
-
-  async function loadHistory() {
-    if (historyItems !== null) {
-      setExpanded(!expanded);
-      return;
-    }
-    setExpanded(true);
-    setHistoryLoading(true);
-    try {
-      const res = await fetch(`/api/admin/channels/${encodeURIComponent(row.thread_id)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setHistoryItems(data.items ?? []);
-        setHistorySummary(data.summary ?? null);
-      }
-    } catch {
-      // silently fail
-    } finally {
-      setHistoryLoading(false);
-    }
-  }
-
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={loadHistory}
-        className="text-xs text-amber-400 hover:text-amber-300 transition-colors"
-      >
-        {row.item_count} messages{hasSummary ? ' + summary' : ''}
-        {row.summary_updated_at && ` (${formatRelativeTime(row.summary_updated_at)})`}
-        <span className="ml-1">{expanded ? '\u25B2' : '\u25BC'}</span>
-      </button>
-      {expanded && (
-        <div className="mt-2 rounded-md bg-gray-800/60 border border-gray-700 p-3 max-h-64 overflow-y-auto space-y-2">
-          {historyLoading && <p className="text-xs text-gray-500">Loading...</p>}
-          {historySummary && (
-            <div className="pb-2 mb-2 border-b border-gray-700">
-              <p className="text-xs font-semibold text-gray-400 mb-1">Rolling Summary</p>
-              <p className="text-xs text-gray-500 whitespace-pre-wrap">{historySummary}</p>
-            </div>
-          )}
-          {historyItems && historyItems.length > 0 && (
-            <div className="space-y-1">
-              <p className="text-xs font-semibold text-gray-400 mb-1">
-                Recent Messages (newest first)
-              </p>
-              {historyItems.map((item) => (
-                <div key={item.id} className="text-xs">
-                  <span className={`font-medium ${item.role === 'assistant' ? 'text-amber-400' : 'text-blue-400'}`}>
-                    {item.author_name ?? (item.role === 'assistant' ? 'Bot' : 'User')}
-                  </span>
-                  <span className="text-gray-600 ml-1.5">
-                    {formatRelativeTime(item.created_at)}
-                  </span>
-                  <p className="text-gray-400 mt-0.5 whitespace-pre-wrap break-words">{item.content}</p>
-                </div>
-              ))}
-            </div>
-          )}
-          {historyItems && historyItems.length === 0 && !historySummary && (
-            <p className="text-xs text-gray-600 italic">No conversation history found.</p>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── Channel table row ──────────────────────────────────────────────────────
 
 function ChannelTableRow({
@@ -231,6 +129,7 @@ function ChannelTableRow({
 
   const isDirty = selectedWorkflowId !== (row.workflow_id ?? '') || resetHistory;
   const isThisRowStatus = actionStatus?.threadId === row.thread_id;
+  const isDm = row.thread_id.includes(':dm:');
 
   async function handleUpdate() {
     setSaving(true);
@@ -244,13 +143,17 @@ function ChannelTableRow({
       {/* Channel info */}
       <td className="py-3 px-4 align-top">
         <div className="min-w-[160px]">
-          {row.channel_name ? (
+          {isDm ? (
+            <span className="block text-sm font-medium text-gray-100">
+              DM: {row.dm_username ?? row.thread_id.split(':')[2]}
+            </span>
+          ) : row.channel_name ? (
             <span className="block text-sm font-medium text-gray-100">
               #{row.channel_name}
             </span>
           ) : (
             <span className="block text-sm font-mono text-gray-100 truncate max-w-[160px]">
-              {formatThreadIdShort(row.thread_id)}
+              {row.thread_id.split(':')[2] ?? row.thread_id}
             </span>
           )}
           {row.guild_name && (
@@ -271,9 +174,12 @@ function ChannelTableRow({
         )}
       </td>
 
-      {/* Memory */}
-      <td className="py-3 px-4 align-top">
-        <MemoryPanel row={row} />
+      {/* Activity */}
+      <td className="py-3 px-4 align-top whitespace-nowrap">
+        <span className="text-xs text-gray-400">{row.item_count} msgs</span>
+        {row.updated_at && (
+          <span className="block text-xs text-gray-600 mt-0.5">{formatRelativeTime(row.updated_at)}</span>
+        )}
       </td>
 
       {/* Workflow dropdown */}
@@ -343,7 +249,6 @@ function AssignNewForm({
   const [saving, setSaving] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
-  // Keep default in sync when workflows first load
   useEffect(() => {
     if (!workflowId && defaultWorkflowId) {
       setWorkflowId(defaultWorkflowId);
@@ -370,7 +275,6 @@ function AssignNewForm({
     await onAssign(trimmed, workflowId, resetHistory);
     setSaving(false);
 
-    // Only clear the form on success
     if (status?.type !== 'error') {
       setThreadId('');
       setResetHistory(false);
@@ -380,20 +284,13 @@ function AssignNewForm({
   return (
     <form onSubmit={handleSubmit} noValidate>
       <div className="space-y-4">
-        {localError && (
-          <p className="text-sm text-red-400">{localError}</p>
-        )}
+        {localError && <p className="text-sm text-red-400">{localError}</p>}
         {isNewFormStatus && (
-          <p
-            className={`text-sm ${
-              status?.type === 'success' ? 'text-green-400' : 'text-red-400'
-            }`}
-          >
+          <p className={`text-sm ${status?.type === 'success' ? 'text-green-400' : 'text-red-400'}`}>
             {status?.message}
           </p>
         )}
 
-        {/* Thread ID */}
         <div>
           <label htmlFor="new-thread-id" className="block text-sm font-medium text-gray-300 mb-1.5">
             Thread ID <span className="text-red-400">*</span>
@@ -414,7 +311,6 @@ function AssignNewForm({
           </p>
         </div>
 
-        {/* Workflow */}
         <div>
           <label htmlFor="new-workflow-id" className="block text-sm font-medium text-gray-300 mb-1.5">
             Workflow <span className="text-red-400">*</span>
@@ -428,7 +324,6 @@ function AssignNewForm({
           />
         </div>
 
-        {/* Reset history */}
         <label className="flex items-start gap-3 cursor-pointer group">
           <input
             type="checkbox"
@@ -500,12 +395,7 @@ export default function ChannelsPage() {
     fetchData();
   }, [fetchData]);
 
-  async function handleAssign(
-    threadId: string,
-    workflowId: string,
-    resetHistory: boolean,
-    isNew = false,
-  ) {
+  async function handleAssign(threadId: string, workflowId: string, resetHistory: boolean, isNew = false) {
     setActionStatus(null);
     try {
       const res = await fetch('/api/admin/channels', {
@@ -526,7 +416,6 @@ export default function ChannelsPage() {
         threadId: isNew ? '__new__' : threadId,
       });
 
-      // Refresh the list so the table stays consistent
       await fetchData();
     } catch (err) {
       setActionStatus({
@@ -539,7 +428,6 @@ export default function ChannelsPage() {
 
   return (
     <div>
-      {/* Header */}
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-gray-100">Channel Assignments</h2>
         <p className="mt-1 text-sm text-gray-500">
@@ -548,26 +436,20 @@ export default function ChannelsPage() {
         </p>
       </div>
 
-      {/* Global status banner (for row-level updates) */}
       {actionStatus && actionStatus.threadId !== '__new__' && (
         <div className="mb-6">
           <StatusBanner status={actionStatus} onDismiss={() => setActionStatus(null)} />
         </div>
       )}
 
-      {/* Load error */}
       {loadError && (
         <div className="mb-6 rounded-md bg-red-900/40 border border-red-700 px-4 py-3 text-sm text-red-300">
           {loadError}
         </div>
       )}
 
-      {/* ── Channels Table ── */}
       <section aria-labelledby="channels-heading" className="mb-10">
-        <h3
-          id="channels-heading"
-          className="text-base font-semibold text-gray-200 mb-4"
-        >
+        <h3 id="channels-heading" className="text-base font-semibold text-gray-200 mb-4">
           Known Channels
         </h3>
 
@@ -579,7 +461,7 @@ export default function ChannelsPage() {
           <div className="rounded-lg border border-dashed border-gray-700 px-8 py-16 text-center">
             <p className="text-sm font-medium text-gray-400">No channels found</p>
             <p className="mt-1 text-xs text-gray-600">
-              Channels appear here automatically when the bot interacts in them. You can also add one manually below.
+              Channels appear here automatically when the bot interacts in them.
             </p>
           </div>
         ) : (
@@ -587,21 +469,11 @@ export default function ChannelsPage() {
             <table className="w-full text-left" aria-label="Known channels">
               <thead>
                 <tr className="border-b border-gray-700 bg-gray-900/60">
-                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Channel
-                  </th>
-                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Agent
-                  </th>
-                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Memory
-                  </th>
-                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Workflow
-                  </th>
-                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Actions
-                  </th>
+                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Channel</th>
+                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Agent</th>
+                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Activity</th>
+                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Workflow</th>
+                  <th scope="col" className="py-3 px-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Actions</th>
                 </tr>
               </thead>
               <tbody className="bg-gray-900 divide-y divide-gray-800">
@@ -620,13 +492,9 @@ export default function ChannelsPage() {
         )}
       </section>
 
-      {/* ── Assign New Channel ── */}
       <section aria-labelledby="assign-new-heading">
         <div className="max-w-lg rounded-lg border border-gray-800 bg-gray-900 p-6">
-          <h3
-            id="assign-new-heading"
-            className="text-base font-semibold text-gray-200 mb-1"
-          >
+          <h3 id="assign-new-heading" className="text-base font-semibold text-gray-200 mb-1">
             Assign New Channel
           </h3>
           <p className="text-xs text-gray-500 mb-5">
