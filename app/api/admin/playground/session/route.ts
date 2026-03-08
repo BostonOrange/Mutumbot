@@ -19,46 +19,32 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'sessionId is required' }, { status: 400 });
     }
 
-    // The playground uses admin:playground:{sessionId} as the primary thread ID.
-    // handleDrinkQuestion internally builds discord:dm:{sessionId} when the channel
-    // ID is passed directly, so we clean up both to avoid orphaned data.
-    const primaryThreadId = `admin:playground:${sessionId}`;
-    const internalThreadId = `discord:dm:${sessionId}`;
+    // handleDrinkQuestion generates discord:dm:{sessionId} as the operating thread ID.
+    // All data (thread items, runs, tool side effects) lives on this thread.
+    const threadId = `discord:dm:${sessionId}`;
 
-    // Reset both threads (clears summary + thread_items)
-    await resetThread(primaryThreadId, { clearSummary: true, clearItems: true });
-    await resetThread(internalThreadId, { clearSummary: true, clearItems: true });
+    // Reset thread (clears summary + thread_items)
+    await resetThread(threadId, { clearSummary: true, clearItems: true });
 
-    // Delete scheduled events for both thread IDs
     let scheduledEventsCount = 0;
-    if (sql) {
-      const primaryEvents = await sql`
-        DELETE FROM scheduled_events
-        WHERE thread_id = ${primaryThreadId}
-        RETURNING id
-      `;
-      const internalEvents = await sql`
-        DELETE FROM scheduled_events
-        WHERE thread_id = ${internalThreadId}
-        RETURNING id
-      `;
-      scheduledEventsCount = primaryEvents.length + internalEvents.length;
-    }
-
-    // Delete agent knowledge facts sourced from both thread IDs
     let knowledgeFactsCount = 0;
+
     if (sql) {
-      const primaryFacts = await sql`
-        DELETE FROM agent_knowledge
-        WHERE source_thread_id = ${primaryThreadId}
+      // Delete scheduled events created during this session
+      const events = await sql`
+        DELETE FROM scheduled_events
+        WHERE thread_id = ${threadId}
         RETURNING id
       `;
-      const internalFacts = await sql`
+      scheduledEventsCount = events.length;
+
+      // Delete agent knowledge facts learned during this session
+      const facts = await sql`
         DELETE FROM agent_knowledge
-        WHERE source_thread_id = ${internalThreadId}
+        WHERE source_thread_id = ${threadId}
         RETURNING id
       `;
-      knowledgeFactsCount = primaryFacts.length + internalFacts.length;
+      knowledgeFactsCount = facts.length;
     }
 
     console.log(
@@ -68,7 +54,7 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      threadId: primaryThreadId,
+      threadId,
       cleaned: {
         thread: true,
         scheduledEvents: scheduledEventsCount,

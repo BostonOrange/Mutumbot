@@ -83,7 +83,8 @@ export default function PlaygroundSidebar({
   const fetchEventCount = useCallback(async (sid: string) => {
     if (!sid) return;
     try {
-      const threadId = `admin:playground:${sid}`;
+      // handleDrinkQuestion generates discord:dm:{sessionId} as the operating thread ID
+      const threadId = `discord:dm:${sid}`;
       const res = await fetch(`/api/admin/events?threadId=${encodeURIComponent(threadId)}`);
       if (res.ok) {
         const events: unknown[] = await res.json();
@@ -124,7 +125,7 @@ export default function PlaygroundSidebar({
   const agentWorkflows = workflows.filter((w) => w.agentId === agentId);
   const selectedWorkflow = agentWorkflows.find((w) => w.id === workflowId);
 
-  const threadId = sessionId ? `admin:playground:${sessionId}` : '—';
+  const threadId = sessionId ? `discord:dm:${sessionId}` : '—';
   const temperature =
     typeof selectedAgent?.params?.temperature === 'number'
       ? selectedAgent.params.temperature.toFixed(1)
@@ -245,7 +246,7 @@ export default function PlaygroundSidebar({
             {selectedAgent && (
               <div>
                 <p className="text-gray-500 mb-1">Capabilities</p>
-                {selectedAgent.capabilities.length > 0 ? (
+                {Array.isArray(selectedAgent.capabilities) && selectedAgent.capabilities.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
                     {selectedAgent.capabilities.map((cap) => (
                       <span

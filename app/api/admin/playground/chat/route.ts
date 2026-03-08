@@ -41,29 +41,25 @@ export async function POST(request: NextRequest) {
     return new Response('message, agentId, workflowId, and sessionId are required', { status: 400 });
   }
 
-  const internalThreadId = `discord:dm:${sessionId}`;
-  const playgroundThreadId = `admin:playground:${sessionId}`;
+  // handleDrinkQuestion(channelId, guildId=null) internally generates discord:dm:{channelId}
+  // as the thread ID. All data (thread items, runs, tool calls) lives on this thread.
+  const threadId = `discord:dm:${sessionId}`;
 
-  // Ensure both thread rows exist before any writes that reference them
+  // Ensure thread row exists before any writes that reference it
   if (sql) {
     await sql`
       INSERT INTO threads (thread_id, state)
-      VALUES (${internalThreadId}, '{"isDm": false}'::jsonb)
-      ON CONFLICT (thread_id) DO NOTHING
-    `;
-    await sql`
-      INSERT INTO threads (thread_id, state)
-      VALUES (${playgroundThreadId}, '{"isDm": false}'::jsonb)
+      VALUES (${threadId}, '{"isDm": false}'::jsonb)
       ON CONFLICT (thread_id) DO NOTHING
     `;
   }
 
-  await assignWorkflowToThread(internalThreadId, workflowId);
+  await assignWorkflowToThread(threadId, workflowId);
 
   // Generate a stable messageId used for both the thread item and the AI call
   const messageId = `playground-${Date.now()}`;
 
-  await addThreadItem(internalThreadId, {
+  await addThreadItem(threadId, {
     type: 'user_message',
     role: 'user',
     authorId: PLAYGROUND_USER_ID,
@@ -92,7 +88,7 @@ export async function POST(request: NextRequest) {
 
         const { content, runId } = result;
 
-        await addThreadItem(internalThreadId, {
+        await addThreadItem(threadId, {
           type: 'assistant_message',
           role: 'assistant',
           content,
