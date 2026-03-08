@@ -10,6 +10,10 @@
  */
 
 import { sql } from '../db';
+import type { JSONValue } from 'postgres';
+
+/** Helper: cast any plain object/array to postgresjs JSONValue for sql.json() */
+const jsonb = (value: unknown) => sql!.json(value as JSONValue);
 
 // ============ TYPES ============
 
@@ -267,7 +271,7 @@ export async function getOrCreateThread(
 
   const result = await sql`
     INSERT INTO threads (thread_id, state)
-    VALUES (${threadId}, ${JSON.stringify(defaultState)})
+    VALUES (${threadId}, ${jsonb(defaultState)})
     ON CONFLICT (thread_id) DO UPDATE SET
       updated_at = CURRENT_TIMESTAMP
     RETURNING thread_id, state, summary, summary_updated_at, created_at, updated_at
@@ -321,7 +325,7 @@ export async function updateThreadState(
   const result = await sql`
     UPDATE threads
     SET
-      state = state || ${JSON.stringify(stateUpdates)}::jsonb,
+      state = state || ${jsonb(stateUpdates)},
       updated_at = CURRENT_TIMESTAMP
     WHERE thread_id = ${threadId}
     RETURNING thread_id, state, summary, summary_updated_at, created_at, updated_at
@@ -445,7 +449,7 @@ export async function addThreadItem(
       ${item.authorId || null},
       ${item.authorName || null},
       ${item.content},
-      ${JSON.stringify(item.metadata || {})},
+      ${jsonb(item.metadata || {})},
       ${item.sourceMessageId || null}
     )
     RETURNING id, thread_id, created_at, type, role, author_id, author_name, content, metadata, source_message_id
@@ -592,7 +596,7 @@ export async function completeRun(
     UPDATE runs
     SET
       status = 'succeeded',
-      response_payload = ${responsePayload ? JSON.stringify(responsePayload) : null},
+      response_payload = ${responsePayload ? jsonb(responsePayload) : null},
       completed_at = CURRENT_TIMESTAMP
     WHERE run_id = ${runId}::uuid
   `;

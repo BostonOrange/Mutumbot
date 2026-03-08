@@ -14,8 +14,12 @@
  */
 
 import { sql } from '../db';
+import type { JSONValue } from 'postgres';
 import { SAFETY_GUARDRAILS, DEFAULT_MUTUMBOT_PERSONA, SENSEI_MUTUM_PERSONA, SPACE_TRAVELER_PERSONA } from '../personality';
 import { resetThread } from './threads';
+
+/** Helper: cast any plain object/array to postgresjs JSONValue for sql.json() */
+const jsonb = (value: unknown) => sql!.json(value as JSONValue);
 
 // ============ TYPES ============
 
@@ -368,9 +372,9 @@ async function ensureDefaults(): Promise<void> {
         'Ancient ominous tiki entity — the original Mutumbot persona',
         ${DEFAULT_MUTUMBOT_PERSONA},
         NULL,
-        ${JSON.stringify(defaultCapabilities)}::jsonb,
+        ${jsonb(defaultCapabilities)},
         ${DEFAULT_MODEL},
-        ${JSON.stringify(DEFAULT_AGENT_PARAMS)}::jsonb,
+        ${jsonb(DEFAULT_AGENT_PARAMS)},
         TRUE
       )
       RETURNING id
@@ -416,9 +420,9 @@ async function ensureDefaults(): Promise<void> {
         'Wise anime sensei with warm energy — assignable to any channel',
         ${SENSEI_MUTUM_PERSONA},
         NULL,
-        ${JSON.stringify(defaultCapabilities)}::jsonb,
+        ${jsonb(defaultCapabilities)},
         ${DEFAULT_MODEL},
-        ${JSON.stringify(DEFAULT_AGENT_PARAMS)}::jsonb,
+        ${jsonb(DEFAULT_AGENT_PARAMS)},
         FALSE
       )
       RETURNING id
@@ -438,9 +442,9 @@ async function ensureDefaults(): Promise<void> {
         'Cosmic wanderer who speaks in mystic riddles — assignable to any channel',
         ${SPACE_TRAVELER_PERSONA},
         NULL,
-        ${JSON.stringify(defaultCapabilities)}::jsonb,
+        ${jsonb(defaultCapabilities)},
         ${DEFAULT_MODEL},
-        ${JSON.stringify(DEFAULT_AGENT_PARAMS)}::jsonb,
+        ${jsonb(DEFAULT_AGENT_PARAMS)},
         FALSE
       )
       RETURNING id
@@ -461,7 +465,7 @@ async function ensureDefaults(): Promise<void> {
         'Default Workflow',
         'Standard conversation handling with context and summaries',
         ${defaultAgentId},
-        ${JSON.stringify(DEFAULT_CONTEXT_POLICY)}::jsonb,
+        ${jsonb(DEFAULT_CONTEXT_POLICY)},
         TRUE
       )
       RETURNING id
@@ -477,7 +481,7 @@ async function ensureDefaults(): Promise<void> {
     if (policy && policy.recentMessages === 15 && policy.maxAgeHours === 4) {
       await sql`
         UPDATE workflows SET
-          context_policy = ${JSON.stringify(DEFAULT_CONTEXT_POLICY)}::jsonb,
+          context_policy = ${jsonb(DEFAULT_CONTEXT_POLICY)},
           updated_at = CURRENT_TIMESTAMP
         WHERE is_default = TRUE
       `;
@@ -596,9 +600,9 @@ export async function createAgent(
       ${options.description || null},
       ${options.systemPrompt || null},
       ${options.customInstructions || null},
-      ${JSON.stringify(options.capabilities || [])}::jsonb,
+      ${jsonb(options.capabilities || [])},
       ${options.model || DEFAULT_MODEL},
-      ${JSON.stringify(options.params || DEFAULT_AGENT_PARAMS)}::jsonb
+      ${jsonb(options.params || DEFAULT_AGENT_PARAMS)}
     )
     RETURNING id, name, description, system_prompt, custom_instructions, capabilities,
               model, params, is_default, is_active, created_at, updated_at
@@ -638,12 +642,12 @@ export async function updateAgent(
         ELSE custom_instructions
       END,
       capabilities = CASE
-        WHEN ${updates.capabilities !== undefined} THEN ${JSON.stringify(updates.capabilities)}::jsonb
+        WHEN ${updates.capabilities !== undefined} THEN ${jsonb(updates.capabilities ?? [])}
         ELSE capabilities
       END,
       model = COALESCE(${updates.model ?? null}, model),
       params = CASE
-        WHEN ${updates.params !== undefined} THEN ${JSON.stringify(updates.params)}::jsonb
+        WHEN ${updates.params !== undefined} THEN ${jsonb(updates.params ?? {})}
         ELSE params
       END,
       is_active = COALESCE(${updates.isActive ?? null}, is_active),
@@ -729,7 +733,7 @@ export async function createWorkflow(
       ${name},
       ${options.description || null},
       ${agentId}::uuid,
-      ${JSON.stringify(policy)}
+      ${jsonb(policy)}
     )
     RETURNING id, name, description, agent_id, context_policy,
               is_default, is_active, created_at, updated_at
@@ -754,11 +758,11 @@ export async function updateWorkflow(
   if (!sql) return null;
 
   // If updating context policy, merge with existing
-  let policyUpdate = null;
+  let policyUpdate: ReturnType<typeof jsonb> | null = null;
   if (updates.contextPolicy) {
     const existing = await getWorkflow(id);
     if (existing) {
-      policyUpdate = JSON.stringify({
+      policyUpdate = jsonb({
         ...existing.contextPolicy,
         ...updates.contextPolicy,
       });
@@ -770,7 +774,7 @@ export async function updateWorkflow(
       name = COALESCE(${updates.name ?? null}, name),
       description = COALESCE(${updates.description ?? null}, description),
       agent_id = COALESCE(${updates.agentId ?? null}::uuid, agent_id),
-      context_policy = COALESCE(${policyUpdate}::jsonb, context_policy),
+      context_policy = COALESCE(${policyUpdate}, context_policy),
       is_active = COALESCE(${updates.isActive ?? null}, is_active),
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ${id}::uuid
@@ -1094,7 +1098,7 @@ export async function createScheduledEvent(
       ${options.channelName || null},
       ${cronExpression},
       ${eventType},
-      ${JSON.stringify(options.payload || {})},
+      ${jsonb(options.payload || {})},
       ${options.timezone || 'UTC'}
     )
     RETURNING *
@@ -1127,7 +1131,7 @@ export async function updateScheduledEvent(
       cron_expression = COALESCE(${updates.cronExpression ?? null}, cron_expression),
       event_type = COALESCE(${updates.eventType ?? null}, event_type),
       payload = CASE
-        WHEN ${updates.payload !== undefined} THEN ${JSON.stringify(updates.payload)}::jsonb
+        WHEN ${updates.payload !== undefined} THEN ${jsonb(updates.payload ?? {})}
         ELSE payload
       END,
       timezone = COALESCE(${updates.timezone ?? null}, timezone),

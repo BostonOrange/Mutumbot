@@ -10,7 +10,11 @@
  */
 
 import { sql } from '../db';
+import type { JSONValue } from 'postgres';
 import { Message, PartialMessage } from 'discord.js';
+
+/** Helper: cast any plain object/array to postgresjs JSONValue for sql.json() */
+const jsonb = (value: unknown) => sql!.json(value as JSONValue);
 import {
   getOrCreateThread,
   addThreadItem,
@@ -84,7 +88,7 @@ export async function ingestMessageCreate(
         ${record.authorId}, ${record.authorName}, ${record.isBot},
         ${record.createdAt.toISOString()}, ${record.content}, ${record.mentionsBot},
         ${record.replyToMessageId}, ${record.hasImage}, ${record.hasAttachments},
-        ${JSON.stringify(record.attachments)}, ${record.isDeleted}, ${record.editedAt?.toISOString() || null}
+        ${jsonb(record.attachments)}, ${record.isDeleted}, ${record.editedAt?.toISOString() || null}
       )
       ON CONFLICT (message_id) DO UPDATE SET
         content = EXCLUDED.content,
@@ -232,7 +236,7 @@ export async function ingestBotMessage(
         ${record.authorId}, ${record.authorName}, ${record.isBot},
         ${record.createdAt.toISOString()}, ${record.content}, ${record.mentionsBot},
         ${record.replyToMessageId}, ${record.hasImage}, ${record.hasAttachments},
-        ${JSON.stringify(record.attachments)}, ${record.isDeleted}, ${null}
+        ${jsonb(record.attachments)}, ${record.isDeleted}, ${null}
       )
       ON CONFLICT (message_id) DO NOTHING
     `;
