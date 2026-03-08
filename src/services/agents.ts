@@ -922,7 +922,7 @@ function rowToAgent(row: Record<string, unknown>): Agent {
     description: row.description as string | null,
     systemPrompt: row.system_prompt as string | null,
     customInstructions: row.custom_instructions as string | null,
-    capabilities: (row.capabilities as string[]) || [],
+    capabilities: Array.isArray(row.capabilities) ? row.capabilities as string[] : [],
     model: row.model as string,
     params: row.params as AgentParams,
     isDefault: row.is_default as boolean,

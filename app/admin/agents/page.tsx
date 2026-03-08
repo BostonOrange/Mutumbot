@@ -58,7 +58,7 @@ function AgentRow({ agent }: { agent: Agent }) {
         )}
 
         {/* Capability tags */}
-        {agent.capabilities.length > 0 && (
+        {Array.isArray(agent.capabilities) && agent.capabilities.length > 0 && (
           <div className="flex flex-wrap gap-1">
             {agent.capabilities.map((cap) => (
               <CapabilityBadge key={cap} capability={cap} />

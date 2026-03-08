@@ -10,14 +10,14 @@ import type { ModelInfo, InputModality } from '@/src/models';
 //   <AgentForm agent={existingAgent} /> — edit mode
 
 const AVAILABLE_CAPABILITIES = [
-  { value: 'image_analysis', label: 'Image Analysis' },
-  { value: 'tribute_tracking', label: 'Tribute Tracking' },
-  { value: 'web_search', label: 'Web Search' },
-  { value: 'scheduled_messages', label: 'Scheduled Messages' },
-  { value: 'random_facts', label: 'Random Facts' },
-  { value: 'content_moderation', label: 'Content Moderation' },
-  { value: 'knowledge', label: 'Knowledge' },
-  { value: 'external_api', label: 'External API' },
+  { value: 'image_analysis', label: 'Image Analysis', desc: 'Analyze images sent by users (drinks, photos, etc.)' },
+  { value: 'tribute_tracking', label: 'Tribute Tracking', desc: 'Track and score drink tributes from users' },
+  { value: 'web_search', label: 'Web Search', desc: 'Search the web for recipes, ingredients, and info' },
+  { value: 'scheduled_messages', label: 'Scheduled Messages', desc: 'Create and manage cron-based scheduled events' },
+  { value: 'random_facts', label: 'Random Facts', desc: 'Share random tiki and cocktail trivia' },
+  { value: 'content_moderation', label: 'Content Moderation', desc: 'Filter and moderate user messages' },
+  { value: 'knowledge', label: 'Knowledge', desc: 'Remember and recall persistent facts across conversations' },
+  { value: 'external_api', label: 'External API', desc: 'Call external APIs for data lookups' },
 ] as const;
 
 /** Model requirements for each capability. If the model lacks these, the capability is disabled. */
@@ -389,16 +389,16 @@ export default function AgentForm({ agent }: AgentFormProps) {
           <p className="text-xs text-gray-500 mb-3">
             Select what features this agent is allowed to use. Incompatible options are auto-disabled based on the selected model.
           </p>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {AVAILABLE_CAPABILITIES.map(({ value, label }) => {
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {AVAILABLE_CAPABILITIES.map(({ value, label, desc }) => {
               const checked = form.capabilities.includes(value);
               const disabledReason = isCapabilityDisabled(value);
               const disabled = disabledReason !== null;
               return (
                 <label
                   key={value}
-                  title={disabledReason ?? undefined}
-                  className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors ${
+                  title={disabledReason ?? desc}
+                  className={`flex items-start gap-2.5 rounded-md border px-3 py-2.5 text-sm transition-colors ${
                     disabled
                       ? 'border-gray-800 bg-gray-900 text-gray-600 cursor-not-allowed opacity-50'
                       : checked
@@ -408,15 +408,20 @@ export default function AgentForm({ agent }: AgentFormProps) {
                 >
                   <input
                     type="checkbox"
-                    className="accent-amber-500 shrink-0"
+                    className="accent-amber-500 shrink-0 mt-0.5"
                     checked={checked}
                     disabled={disabled}
                     onChange={() => !disabled && toggleCapability(value)}
                   />
-                  {label}
-                  {disabled && (
-                    <span className="ml-auto text-[10px] text-gray-600">N/A</span>
-                  )}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium">{label}</span>
+                      {disabled && <span className="text-[10px] text-gray-600">N/A</span>}
+                    </div>
+                    <p className={`text-xs mt-0.5 leading-snug ${disabled ? 'text-gray-700' : checked ? 'text-amber-400/60' : 'text-gray-500'}`}>
+                      {disabled ? disabledReason : desc}
+                    </p>
+                  </div>
                 </label>
               );
             })}
