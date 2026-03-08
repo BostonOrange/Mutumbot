@@ -27,11 +27,20 @@ if (!DATABASE_URL) {
 let dbInitialized = false;
 
 // Create the SQL client with connection pooling
-export const sql = DATABASE_URL ? postgres(DATABASE_URL, {
-  max: 10,
-  idle_timeout: 20,
-  connect_timeout: 10,
-}) : null;
+// Wrapped in try/catch to handle invalid DATABASE_URL during Next.js build phase
+let _sql: ReturnType<typeof postgres> | null = null;
+try {
+  if (DATABASE_URL) {
+    _sql = postgres(DATABASE_URL, {
+      max: 10,
+      idle_timeout: 20,
+      connect_timeout: 10,
+    });
+  }
+} catch (err) {
+  console.error('Failed to create database client (invalid DATABASE_URL?):', err);
+}
+export const sql = _sql;
 
 /**
  * Check if database is available
