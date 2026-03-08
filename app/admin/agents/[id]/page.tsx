@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { getAgent } from '@/src/services/agents';
 import AgentForm from '@/app/admin/components/AgentForm';
+import type { SerializableAgent } from '@/app/admin/components/AgentForm';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,17 +10,33 @@ interface AgentEditPageProps {
   params: Promise<{ id: string }>;
 }
 
+/** Strip Date fields and ensure plain JSON-serializable object for client component */
+function toSerializable(agent: NonNullable<Awaited<ReturnType<typeof getAgent>>>): SerializableAgent {
+  return {
+    id: agent.id,
+    name: agent.name,
+    description: agent.description,
+    systemPrompt: agent.systemPrompt,
+    customInstructions: agent.customInstructions,
+    capabilities: [...agent.capabilities],
+    model: agent.model,
+    params: agent.params ? { ...agent.params } : {},
+    isDefault: agent.isDefault,
+    isActive: agent.isActive,
+  };
+}
+
 export default async function AgentEditPage({ params }: AgentEditPageProps) {
   const { id } = await params;
   const isNew = id === 'new';
 
-  let agent = undefined;
+  let agent: SerializableAgent | undefined = undefined;
 
   if (!isNew) {
     try {
       const found = await getAgent(id);
       if (!found) notFound();
-      agent = found;
+      agent = toSerializable(found);
     } catch {
       notFound();
     }

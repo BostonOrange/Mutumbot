@@ -2,12 +2,26 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import type { Agent } from '@/src/services/agents';
+import type { AgentParams } from '@/src/services/agents';
 import type { ModelInfo, InputModality } from '@/src/models';
 
 // Usage:
 //   <AgentForm />                    — create mode
 //   <AgentForm agent={existingAgent} /> — edit mode
+
+/** JSON-serializable subset of Agent (no Date fields) for server→client prop passing */
+export interface SerializableAgent {
+  id: string;
+  name: string;
+  description: string | null;
+  systemPrompt: string | null;
+  customInstructions: string | null;
+  capabilities: string[];
+  model: string;
+  params: AgentParams;
+  isDefault: boolean;
+  isActive: boolean;
+}
 
 const AVAILABLE_CAPABILITIES = [
   { value: 'image_analysis', label: 'Image Analysis', desc: 'AI-analyze images in /tribute and @mentions. Requires model with image input.' },
@@ -48,7 +62,7 @@ function formatPrice(p: number): string {
 }
 
 interface AgentFormProps {
-  agent?: Agent;
+  agent?: SerializableAgent;
 }
 
 interface FormState {
@@ -61,7 +75,7 @@ interface FormState {
   capabilities: string[];
 }
 
-function buildInitialState(agent?: Agent): FormState {
+function buildInitialState(agent?: SerializableAgent): FormState {
   return {
     name: agent?.name ?? '',
     description: agent?.description ?? '',
@@ -91,6 +105,35 @@ export default function AgentForm({ agent }: AgentFormProps) {
   }, []);
 
   useEffect(() => { fetchModels(); }, [fetchModels]);
+
+  // Re-fetch agent data from API on mount to guard against serialization issues
+  // between server component and client component (e.g. capabilities lost in transit)
+  const hasSyncedRef = useRef(false);
+  useEffect(() => {
+    if (!agent?.id || hasSyncedRef.current) return;
+    hasSyncedRef.current = true;
+
+    fetch(`/api/admin/agents/${agent.id}`)
+      .then((res) => res.ok ? res.json() : null)
+      .then((fresh) => {
+        if (!fresh?.capabilities) return;
+        const freshCaps: string[] = Array.isArray(fresh.capabilities) ? fresh.capabilities : [];
+        setForm((prev) => {
+          // Only update if the API has capabilities that the initial state is missing
+          if (freshCaps.length > 0 && prev.capabilities.length === 0) {
+            return { ...prev, capabilities: freshCaps };
+          }
+          // Also sync if the arrays differ (covers partial corruption)
+          const same = prev.capabilities.length === freshCaps.length &&
+            prev.capabilities.every((c) => freshCaps.includes(c));
+          if (!same && freshCaps.length > 0) {
+            return { ...prev, capabilities: freshCaps };
+          }
+          return prev;
+        });
+      })
+      .catch(() => { /* ignore - initial props are the fallback */ });
+  }, [agent?.id]);
 
   const selectedModel = models.find((m) => m.id === form.model);
 
