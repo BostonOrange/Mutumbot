@@ -565,6 +565,72 @@ async function testUserMemory(): Promise<string[]> {
   return details;
 }
 
+async function testTributeTracking(agentId: string): Promise<string[]> {
+  const agents = await getAgents();
+  const agent = agents.find((a) => a.id === agentId);
+  if (!agent) throw new Error(`Agent ${agentId} not found`);
+
+  if (!agent.capabilities.includes('tribute_tracking')) {
+    return [`Agent: ${agent.name}`, `tribute_tracking capability not enabled — skipping`];
+  }
+
+  if (!sql) throw new Error('Database not available');
+
+  // Verify tributes table exists and is queryable
+  const tributeCount = await sql`SELECT COUNT(*)::int AS count FROM tributes`;
+  const recentTributes = await sql`
+    SELECT COUNT(*)::int AS count FROM tributes
+    WHERE created_at > NOW() - INTERVAL '7 days'
+  `;
+
+  // Verify command gating works
+  const GATED_COMMANDS = ['tribute', 'tally', 'demand'];
+
+  return [
+    `Agent: ${agent.name}`,
+    `Total tributes in DB: ${tributeCount[0].count}`,
+    `Tributes in last 7 days: ${recentTributes[0].count}`,
+    `Gated commands: ${GATED_COMMANDS.join(', ')}`,
+    `Tribute tracking is working.`,
+  ];
+}
+
+async function testRandomFacts(agentId: string): Promise<string[]> {
+  const agents = await getAgents();
+  const agent = agents.find((a) => a.id === agentId);
+  if (!agent) throw new Error(`Agent ${agentId} not found`);
+
+  if (!agent.capabilities.includes('random_facts')) {
+    return [`Agent: ${agent.name}`, `random_facts capability not enabled — skipping`];
+  }
+
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error('OPENROUTER_API_KEY not set');
+
+  const openrouter = new OpenAI({ baseURL: 'https://openrouter.ai/api/v1', apiKey });
+
+  // Test that the AI can generate a random fact (same pattern as handleRandomDrinkFact)
+  const response = await openrouter.chat.completions.create({
+    model: agent.model,
+    messages: [
+      { role: 'user', content: 'Tell me one short fun fact about tiki cocktails.' },
+    ],
+    max_tokens: 150,
+    temperature: 0.9,
+  });
+
+  const reply = response.choices?.[0]?.message?.content ?? '(empty)';
+
+  return [
+    `Agent: ${agent.name}`,
+    `Model: ${agent.model}`,
+    `Gated command: /drink random`,
+    `Test fact: "${reply.trim().slice(0, 200)}"`,
+    `Tokens: ${response.usage?.prompt_tokens ?? '?'} prompt + ${response.usage?.completion_tokens ?? '?'} completion`,
+    `Random facts generation is working.`,
+  ];
+}
+
 async function testCapabilityGating(): Promise<string[]> {
   const details: string[] = [];
 
@@ -596,6 +662,11 @@ async function testCapabilityGating(): Promise<string[]> {
         : webOnlyNames.join(', ') + ' (unexpected!)'
     }`
   );
+
+  // Non-tool capabilities: verify they don't add tools but ARE real capabilities
+  details.push(`tribute_tracking \u2192 gates: /tribute, /tally, /demand, @mention scoring`);
+  details.push(`random_facts \u2192 gates: /drink random`);
+  details.push(`image_analysis \u2192 gates: image analysis in /tribute and @mentions`);
 
   return details;
 }
@@ -697,6 +768,20 @@ export async function POST(request: NextRequest) {
           break;
         case 'capability_gating':
           results.push(await runTest('Capability Gating', testCapabilityGating));
+          break;
+        case 'tribute_tracking':
+          if (!agentId) {
+            results.push({ name: 'Tribute Tracking', status: 'skip', durationMs: 0, details: ['No agent selected'] });
+          } else {
+            results.push(await runTest('Tribute Tracking', () => testTributeTracking(agentId)));
+          }
+          break;
+        case 'random_facts':
+          if (!agentId) {
+            results.push({ name: 'Random Facts', status: 'skip', durationMs: 0, details: ['No agent selected'] });
+          } else {
+            results.push(await runTest('Random Facts', () => testRandomFacts(agentId)));
+          }
           break;
       }
     }

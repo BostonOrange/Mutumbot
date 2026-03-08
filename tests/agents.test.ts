@@ -137,9 +137,7 @@ describe('AVAILABLE_CAPABILITIES', () => {
     expect(AVAILABLE_CAPABILITIES).toHaveProperty('WEB_SEARCH');
     expect(AVAILABLE_CAPABILITIES).toHaveProperty('SCHEDULED_MESSAGES');
     expect(AVAILABLE_CAPABILITIES).toHaveProperty('RANDOM_FACTS');
-    expect(AVAILABLE_CAPABILITIES).toHaveProperty('CONTENT_MODERATION');
     expect(AVAILABLE_CAPABILITIES).toHaveProperty('KNOWLEDGE');
-    expect(AVAILABLE_CAPABILITIES).toHaveProperty('EXTERNAL_API');
   });
 
   it('has string values for every key', () => {

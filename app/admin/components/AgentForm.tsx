@@ -24,14 +24,12 @@ export interface SerializableAgent {
 }
 
 const AVAILABLE_CAPABILITIES = [
-  { value: 'image_analysis', label: 'Image Analysis', desc: 'AI-analyze images in /tribute and @mentions. Requires model with image input.' },
+  { value: 'image_analysis', label: 'Image Analysis', desc: 'Analyze images in /tribute and @mentions. Requires model with image input.' },
   { value: 'tribute_tracking', label: 'Tribute Tracking', desc: 'Enables /tribute, /tally, /demand commands and mention-based tribute scoring.' },
-  { value: 'web_search', label: 'Web Search', desc: 'Enables real-time web search via OpenRouter (:online plugin). Extra cost per query.' },
+  { value: 'web_search', label: 'Web Search', desc: 'Real-time web search via OpenRouter :online plugin. Extra cost per query.' },
   { value: 'scheduled_messages', label: 'Scheduled Messages', desc: 'AI can create/manage cron events (reminders, auto-messages, AI prompts).' },
   { value: 'random_facts', label: 'Random Facts', desc: 'Enables the /drink random command for tiki and cocktail trivia.' },
-  { value: 'content_moderation', label: 'Content Moderation', desc: 'Filter and moderate user messages. (Coming soon)' },
   { value: 'knowledge', label: 'Knowledge', desc: 'AI can remember_fact and recall_facts — persistent memory across conversations.' },
-  { value: 'external_api', label: 'External API', desc: 'Call external APIs for data lookups. (Coming soon)' },
 ] as const;
 
 /** Model requirements for each capability. If the model lacks these, the capability is disabled. */
@@ -39,12 +37,15 @@ const CAPABILITY_REQUIREMENTS: Partial<Record<string, { modalities?: InputModali
   image_analysis: { modalities: ['image'], reason: 'Model does not support image input' },
 };
 
-/** Custom bot tools grouped by which capability gates them */
+/** Tools and commands grouped by which capability gates them */
 const CUSTOM_TOOL_SETS: { capability: string | null; label: string; tools: string[] }[] = [
   { capability: null, label: 'Always Available', tools: ['list_channels'] },
+  { capability: 'tribute_tracking', label: 'Tribute Tracking', tools: ['/tribute', '/tally', '/demand', '@mention scoring'] },
+  { capability: 'image_analysis', label: 'Image Analysis', tools: ['image → tribute scoring', 'image → AI description'] },
   { capability: 'scheduled_messages', label: 'Scheduled Messages', tools: ['create_scheduled_event', 'list_scheduled_events', 'update_scheduled_event', 'delete_scheduled_event'] },
   { capability: 'knowledge', label: 'Knowledge', tools: ['remember_fact', 'recall_facts'] },
   { capability: 'web_search', label: 'Web Search (OpenRouter)', tools: ['model:online (built-in)'] },
+  { capability: 'random_facts', label: 'Random Facts', tools: ['/drink random'] },
 ];
 
 const DEFAULT_MODEL = 'google/gemini-2.5-flash-lite';

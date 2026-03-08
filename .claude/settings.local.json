@@ -8,7 +8,14 @@
       "Bash(npm.cmd run gateway:build:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(cd:*)",
+      "Bash(npm run:*)",
+      "Bash(git:*)",
+      "Bash(python:*)",
+      "WebFetch(domain:openrouter.ai)",
+      "Bash(npm test:*)",
+      "Bash(npx vitest:*)"
     ]
   }
 }

@@ -77,20 +77,14 @@ export const AVAILABLE_CAPABILITIES = {
   // Core capabilities
   IMAGE_ANALYSIS: 'image_analysis',       // Analyze images (tributes, etc.)
   TRIBUTE_TRACKING: 'tribute_tracking',   // Track and score tributes
-  WEB_SEARCH: 'web_search',               // Search the web (future)
+  WEB_SEARCH: 'web_search',               // Real-time web search via :online plugin
 
   // Content generation
-  SCHEDULED_MESSAGES: 'scheduled_messages', // Can be triggered by cron jobs
-  RANDOM_FACTS: 'random_facts',           // Generate random facts
-
-  // Moderation
-  CONTENT_MODERATION: 'content_moderation', // Flag inappropriate content
+  SCHEDULED_MESSAGES: 'scheduled_messages', // AI tool: create/manage cron events
+  RANDOM_FACTS: 'random_facts',           // /drink random command
 
   // Knowledge
-  KNOWLEDGE: 'knowledge',                 // Persistent fact memory per agent
-
-  // Integration
-  EXTERNAL_API: 'external_api',           // Call external APIs (future)
+  KNOWLEDGE: 'knowledge',                 // AI tool: persistent fact memory per agent
 } as const;
 
 export type Capability = typeof AVAILABLE_CAPABILITIES[keyof typeof AVAILABLE_CAPABILITIES];
@@ -521,6 +515,17 @@ async function ensureDefaults(): Promise<void> {
       WHERE jsonb_typeof(elem) = 'string' AND elem::text LIKE '"[%'
     )
   `;
+
+  // Remove deprecated capabilities that have no implementation
+  const DEPRECATED_CAPS = ['content_moderation', 'external_api'];
+  for (const cap of DEPRECATED_CAPS) {
+    await sql`
+      UPDATE agents
+      SET capabilities = capabilities - ${cap},
+          updated_at = CURRENT_TIMESTAMP
+      WHERE capabilities @> ${`"${cap}"`}::jsonb
+    `;
+  }
 }
 
 // ============ AGENT OPERATIONS ============
