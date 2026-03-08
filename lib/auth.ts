@@ -36,6 +36,7 @@ const result: NextAuthResult = NextAuth({
     error: '/api/auth/error',
   },
   secret: process.env.NEXTAUTH_SECRET,
+  trustHost: true,
 });
 
 export const handlers: NextAuthResult['handlers'] = result.handlers;
