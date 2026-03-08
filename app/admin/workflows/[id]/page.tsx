@@ -3,6 +3,8 @@ import Link from 'next/link';
 import { getWorkflow, getAgents } from '@/src/services/agents';
 import WorkflowForm from '@/app/admin/components/WorkflowForm';
 
+export const dynamic = 'force-dynamic';
+
 interface WorkflowEditPageProps {
   params: Promise<{ id: string }>;
 }

@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { getAgents } from '@/src/services/agents';
 import type { Agent } from '@/src/services/agents';
 
+export const dynamic = 'force-dynamic';
+
 const CAPABILITY_LABELS: Record<string, string> = {
   image_analysis: 'Images',
   tribute_tracking: 'Tributes',

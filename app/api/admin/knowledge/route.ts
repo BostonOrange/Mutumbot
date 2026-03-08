@@ -2,6 +2,8 @@ import { auth } from '@/lib/auth';
 import { NextRequest, NextResponse } from 'next/server';
 import { recallFacts, deleteFact } from '@/src/services/agentKnowledge';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user) {

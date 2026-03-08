@@ -27,6 +27,8 @@ import {
 import { ISEE_EMOJI, getRandomPhrase, TRIBUTE_DEMAND_PHRASES } from '@/src/personality';
 import { formatPersonalStats, formatLeaderboard } from '@/src/formatters';
 
+export const dynamic = 'force-dynamic';
+
 const DISCORD_PUBLIC_KEY = process.env.DISCORD_PUBLIC_KEY || '';
 const DISCORD_APP_ID = process.env.DISCORD_APP_ID || '';
 

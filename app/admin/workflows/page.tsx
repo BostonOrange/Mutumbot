@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { getWorkflows, getAgents } from '@/src/services/agents';
 import type { Workflow, Agent } from '@/src/services/agents';
 
+export const dynamic = 'force-dynamic';
+
 function PolicySummary({ policy }: { policy: Workflow['contextPolicy'] }) {
   return (
     <div className="flex flex-wrap gap-2 mt-2">

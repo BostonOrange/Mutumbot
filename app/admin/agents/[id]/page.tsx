@@ -3,6 +3,8 @@ import Link from 'next/link';
 import { getAgent } from '@/src/services/agents';
 import AgentForm from '@/app/admin/components/AgentForm';
 
+export const dynamic = 'force-dynamic';
+
 interface AgentEditPageProps {
   params: Promise<{ id: string }>;
 }

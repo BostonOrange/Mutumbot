@@ -1,6 +1,8 @@
 import { sql } from '@/src/db';
 import StatCard from './components/StatCard';
 
+export const dynamic = 'force-dynamic';
+
 async function getStats() {
   if (!sql) {
     return {
