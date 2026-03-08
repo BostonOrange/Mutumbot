@@ -368,9 +368,9 @@ async function ensureDefaults(): Promise<void> {
         'Ancient ominous tiki entity — the original Mutumbot persona',
         ${DEFAULT_MUTUMBOT_PERSONA},
         NULL,
-        ${JSON.stringify(defaultCapabilities)},
+        ${JSON.stringify(defaultCapabilities)}::jsonb,
         ${DEFAULT_MODEL},
-        ${JSON.stringify(DEFAULT_AGENT_PARAMS)},
+        ${JSON.stringify(DEFAULT_AGENT_PARAMS)}::jsonb,
         TRUE
       )
       RETURNING id
@@ -416,9 +416,9 @@ async function ensureDefaults(): Promise<void> {
         'Wise anime sensei with warm energy — assignable to any channel',
         ${SENSEI_MUTUM_PERSONA},
         NULL,
-        ${JSON.stringify(defaultCapabilities)},
+        ${JSON.stringify(defaultCapabilities)}::jsonb,
         ${DEFAULT_MODEL},
-        ${JSON.stringify(DEFAULT_AGENT_PARAMS)},
+        ${JSON.stringify(DEFAULT_AGENT_PARAMS)}::jsonb,
         FALSE
       )
       RETURNING id
@@ -438,9 +438,9 @@ async function ensureDefaults(): Promise<void> {
         'Cosmic wanderer who speaks in mystic riddles — assignable to any channel',
         ${SPACE_TRAVELER_PERSONA},
         NULL,
-        ${JSON.stringify(defaultCapabilities)},
+        ${JSON.stringify(defaultCapabilities)}::jsonb,
         ${DEFAULT_MODEL},
-        ${JSON.stringify(DEFAULT_AGENT_PARAMS)},
+        ${JSON.stringify(DEFAULT_AGENT_PARAMS)}::jsonb,
         FALSE
       )
       RETURNING id
@@ -461,7 +461,7 @@ async function ensureDefaults(): Promise<void> {
         'Default Workflow',
         'Standard conversation handling with context and summaries',
         ${defaultAgentId},
-        ${JSON.stringify(DEFAULT_CONTEXT_POLICY)},
+        ${JSON.stringify(DEFAULT_CONTEXT_POLICY)}::jsonb,
         TRUE
       )
       RETURNING id
@@ -477,7 +477,7 @@ async function ensureDefaults(): Promise<void> {
     if (policy && policy.recentMessages === 15 && policy.maxAgeHours === 4) {
       await sql`
         UPDATE workflows SET
-          context_policy = ${JSON.stringify(DEFAULT_CONTEXT_POLICY)},
+          context_policy = ${JSON.stringify(DEFAULT_CONTEXT_POLICY)}::jsonb,
           updated_at = CURRENT_TIMESTAMP
         WHERE is_default = TRUE
       `;
@@ -492,6 +492,30 @@ async function ensureDefaults(): Promise<void> {
         updated_at = CURRENT_TIMESTAMP
     WHERE NOT capabilities @> '"knowledge"'
       AND is_active = TRUE
+  `;
+
+  // Fix corrupted capabilities: flatten any stringified JSON arrays that
+  // ended up as elements (caused by double-serialization with postgresjs)
+  await sql`
+    UPDATE agents
+    SET capabilities = (
+      SELECT COALESCE(jsonb_agg(DISTINCT elem), '[]'::jsonb)
+      FROM (
+        SELECT jsonb_array_elements_text(
+          CASE
+            WHEN jsonb_typeof(elem) = 'string' AND elem::text LIKE '"[%'
+            THEN (elem #>> '{}')::jsonb
+            ELSE jsonb_build_array(elem #>> '{}')
+          END
+        ) AS elem
+        FROM jsonb_array_elements(capabilities) AS e(elem)
+      ) sub
+    ),
+    updated_at = CURRENT_TIMESTAMP
+    WHERE EXISTS (
+      SELECT 1 FROM jsonb_array_elements(capabilities) AS e(elem)
+      WHERE jsonb_typeof(elem) = 'string' AND elem::text LIKE '"[%'
+    )
   `;
 }
 
@@ -572,9 +596,9 @@ export async function createAgent(
       ${options.description || null},
       ${options.systemPrompt || null},
       ${options.customInstructions || null},
-      ${JSON.stringify(options.capabilities || [])},
+      ${JSON.stringify(options.capabilities || [])}::jsonb,
       ${options.model || DEFAULT_MODEL},
-      ${JSON.stringify(options.params || DEFAULT_AGENT_PARAMS)}
+      ${JSON.stringify(options.params || DEFAULT_AGENT_PARAMS)}::jsonb
     )
     RETURNING id, name, description, system_prompt, custom_instructions, capabilities,
               model, params, is_default, is_active, created_at, updated_at
@@ -915,6 +939,32 @@ export async function resolveConfigWithDefaults(
 
 // ============ ROW CONVERTERS ============
 
+/**
+ * Parse capabilities from DB, handling potential double-serialization corruption
+ * where a stringified JSON array ends up as one element of the outer array.
+ */
+function parseCapabilities(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const caps: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'string') continue;
+    // Detect stringified JSON array (corruption from double-serialization)
+    if (item.startsWith('[') && item.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(item);
+        if (Array.isArray(parsed)) {
+          caps.push(...parsed.filter((p: unknown) => typeof p === 'string'));
+          continue;
+        }
+      } catch {
+        // Not valid JSON, treat as regular string
+      }
+    }
+    caps.push(item);
+  }
+  return [...new Set(caps)]; // Deduplicate
+}
+
 function rowToAgent(row: Record<string, unknown>): Agent {
   return {
     id: row.id as string,
@@ -922,7 +972,7 @@ function rowToAgent(row: Record<string, unknown>): Agent {
     description: row.description as string | null,
     systemPrompt: row.system_prompt as string | null,
     customInstructions: row.custom_instructions as string | null,
-    capabilities: Array.isArray(row.capabilities) ? row.capabilities as string[] : [],
+    capabilities: parseCapabilities(row.capabilities),
     model: row.model as string,
     params: row.params as AgentParams,
     isDefault: row.is_default as boolean,
