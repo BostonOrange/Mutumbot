@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Agent } from '@/src/services/agents';
-import type { ModelInfo } from '@/src/models';
+import type { ModelInfo, InputModality } from '@/src/models';
 
 // Usage:
 //   <AgentForm />                    — create mode
@@ -19,6 +19,18 @@ const AVAILABLE_CAPABILITIES = [
   { value: 'knowledge', label: 'Knowledge' },
   { value: 'external_api', label: 'External API' },
 ] as const;
+
+/** Model requirements for each capability. If the model lacks these, the capability is disabled. */
+const CAPABILITY_REQUIREMENTS: Partial<Record<string, { modalities?: InputModality[]; reason: string }>> = {
+  image_analysis: { modalities: ['image'], reason: 'Model does not support image input' },
+};
+
+/** Custom bot tools grouped by which capability gates them */
+const CUSTOM_TOOL_SETS: { capability: string | null; label: string; tools: string[] }[] = [
+  { capability: null, label: 'Always Available', tools: ['list_channels'] },
+  { capability: 'scheduled_messages', label: 'Scheduled Messages', tools: ['create_scheduled_event', 'list_scheduled_events', 'update_scheduled_event', 'delete_scheduled_event'] },
+  { capability: 'knowledge', label: 'Knowledge', tools: ['remember_fact', 'recall_facts'] },
+];
 
 const DEFAULT_MODEL = 'google/gemini-2.5-flash-lite';
 const DEFAULT_TEMPERATURE = 0.7;
@@ -80,6 +92,36 @@ export default function AgentForm({ agent }: AgentFormProps) {
   useEffect(() => { fetchModels(); }, [fetchModels]);
 
   const selectedModel = models.find((m) => m.id === form.model);
+
+  /** Check if a capability is compatible with the currently selected model */
+  function isCapabilityDisabled(cap: string): string | null {
+    const req = CAPABILITY_REQUIREMENTS[cap];
+    if (!req || !selectedModel) return null;
+    if (req.modalities?.some((m) => !selectedModel.inputModalities.includes(m))) {
+      return req.reason;
+    }
+    return null;
+  }
+
+  // Auto-remove incompatible capabilities when model changes
+  const prevModelRef = useRef(form.model);
+  useEffect(() => {
+    if (prevModelRef.current === form.model || !selectedModel) {
+      prevModelRef.current = form.model;
+      return;
+    }
+    prevModelRef.current = form.model;
+
+    setForm((prev) => {
+      const incompatible = prev.capabilities.filter((cap) => {
+        const req = CAPABILITY_REQUIREMENTS[cap];
+        if (!req) return false;
+        return req.modalities?.some((m) => !selectedModel.inputModalities.includes(m));
+      });
+      if (incompatible.length === 0) return prev;
+      return { ...prev, capabilities: prev.capabilities.filter((c) => !incompatible.includes(c)) };
+    });
+  }, [form.model, selectedModel]);
 
   function handleField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -345,30 +387,91 @@ export default function AgentForm({ agent }: AgentFormProps) {
         <div>
           <span className={labelClass}>Capabilities</span>
           <p className="text-xs text-gray-500 mb-3">
-            Select what features this agent is allowed to use.
+            Select what features this agent is allowed to use. Incompatible options are auto-disabled based on the selected model.
           </p>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {AVAILABLE_CAPABILITIES.map(({ value, label }) => {
               const checked = form.capabilities.includes(value);
+              const disabledReason = isCapabilityDisabled(value);
+              const disabled = disabledReason !== null;
               return (
                 <label
                   key={value}
-                  className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm cursor-pointer transition-colors ${
-                    checked
-                      ? 'border-amber-500/50 bg-amber-500/10 text-amber-300'
-                      : 'border-gray-700 bg-gray-800 text-gray-400 hover:border-gray-600 hover:text-gray-300'
+                  title={disabledReason ?? undefined}
+                  className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors ${
+                    disabled
+                      ? 'border-gray-800 bg-gray-900 text-gray-600 cursor-not-allowed opacity-50'
+                      : checked
+                        ? 'border-amber-500/50 bg-amber-500/10 text-amber-300 cursor-pointer'
+                        : 'border-gray-700 bg-gray-800 text-gray-400 hover:border-gray-600 hover:text-gray-300 cursor-pointer'
                   }`}
                 >
                   <input
                     type="checkbox"
                     className="accent-amber-500 shrink-0"
                     checked={checked}
-                    onChange={() => toggleCapability(value)}
+                    disabled={disabled}
+                    onChange={() => !disabled && toggleCapability(value)}
                   />
                   {label}
+                  {disabled && (
+                    <span className="ml-auto text-[10px] text-gray-600">N/A</span>
+                  )}
                 </label>
               );
             })}
+          </div>
+        </div>
+
+        {/* Active Tools Summary */}
+        <div>
+          <span className={labelClass}>Active Tools</span>
+          <p className="text-xs text-gray-500 mb-3">
+            Tools available to this agent based on capabilities and model.
+          </p>
+          <div className="space-y-2">
+            {/* Custom bot tools */}
+            {CUSTOM_TOOL_SETS.map(({ capability, label, tools }) => {
+              const active = capability === null || form.capabilities.includes(capability);
+              return (
+                <div key={label} className={`rounded-md border px-3 py-2 text-xs ${active ? 'border-gray-700 bg-gray-800/60' : 'border-gray-800 bg-gray-900/40 opacity-40'}`}>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className={`font-medium ${active ? 'text-gray-300' : 'text-gray-600'}`}>{label}</span>
+                    {capability && (
+                      <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${active ? 'bg-amber-500/20 text-amber-400' : 'bg-gray-800 text-gray-600'}`}>
+                        {active ? 'enabled' : 'disabled'}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {tools.map((t) => (
+                      <span key={t} className={`rounded px-1.5 py-0.5 font-mono ${active ? 'bg-gray-700 text-gray-400' : 'bg-gray-800 text-gray-600'}`}>
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            {/* Native model tools */}
+            {selectedModel && selectedModel.nativeTools.length > 0 && (
+              <div className="rounded-md border border-green-900/50 bg-green-900/10 px-3 py-2 text-xs">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-medium text-green-400">Native Model Tools</span>
+                  <span className="rounded-full bg-green-500/20 px-1.5 py-0.5 text-[10px] text-green-400">built-in</span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {selectedModel.nativeTools.map((t) => (
+                    <span key={t} className="rounded bg-green-900/30 px-1.5 py-0.5 font-mono text-green-300">
+                      {t.replace('_', ' ')}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {selectedModel && selectedModel.nativeTools.length === 0 && (
+              <p className="text-xs text-gray-600 italic">This model has no native tools.</p>
+            )}
           </div>
         </div>
 
