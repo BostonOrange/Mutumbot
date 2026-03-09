@@ -270,22 +270,22 @@ export default function PlaygroundSidebar({
                 <div className="space-y-0.5">
                   <div className="flex justify-between">
                     <span className="text-gray-500">Messages</span>
-                    <span className="text-gray-400">{selectedWorkflow.contextPolicy.recentMessages}</span>
+                    <span className="text-gray-400">{selectedWorkflow.contextPolicy?.recentMessages ?? '—'}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-500">Max age</span>
-                    <span className="text-gray-400">{selectedWorkflow.contextPolicy.maxAgeHours}h</span>
+                    <span className="text-gray-400">{selectedWorkflow.contextPolicy?.maxAgeHours ?? '—'}h</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-500">Summary</span>
-                    <span className={selectedWorkflow.contextPolicy.useSummary ? 'text-amber-400' : 'text-gray-600'}>
-                      {selectedWorkflow.contextPolicy.useSummary ? 'on' : 'off'}
+                    <span className={selectedWorkflow.contextPolicy?.useSummary ? 'text-amber-400' : 'text-gray-600'}>
+                      {selectedWorkflow.contextPolicy?.useSummary ? 'on' : 'off'}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-500">Max chars</span>
                     <span className="text-gray-400">
-                      {selectedWorkflow.contextPolicy.maxTranscriptChars.toLocaleString()}
+                      {selectedWorkflow.contextPolicy?.maxTranscriptChars?.toLocaleString() ?? '—'}
                     </span>
                   </div>
                 </div>
