@@ -123,7 +123,18 @@ export default function PlaygroundSidebar({
 
   const selectedAgent = agents.find((a) => a.id === agentId);
   const agentWorkflows = workflows.filter((w) => w.agentId === agentId);
-  const selectedWorkflow = agentWorkflows.find((w) => w.id === workflowId);
+  const rawWorkflow = agentWorkflows.find((w) => w.id === workflowId);
+
+  // contextPolicy may be a JSON string (double-serialized legacy) or a proper object
+  const selectedWorkflow = rawWorkflow
+    ? {
+        ...rawWorkflow,
+        contextPolicy:
+          typeof rawWorkflow.contextPolicy === 'string'
+            ? JSON.parse(rawWorkflow.contextPolicy)
+            : rawWorkflow.contextPolicy ?? {},
+      }
+    : undefined;
 
   const threadId = sessionId ? `discord:dm:${sessionId}` : '—';
   const temperature =
