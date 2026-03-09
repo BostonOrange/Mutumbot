@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import PlaygroundChat from '../components/PlaygroundChat';
 import PlaygroundSidebar from '../components/PlaygroundSidebar';
 
@@ -11,9 +11,14 @@ function generateSessionId(): string {
 export default function PlaygroundPage() {
   const [agentId, setAgentId] = useState('');
   const [workflowId, setWorkflowId] = useState('');
-  const [sessionId, setSessionId] = useState(() => generateSessionId());
+  const [sessionId, setSessionId] = useState('');
   // Incrementing key forces PlaygroundChat to remount on session reset
   const [chatKey, setChatKey] = useState(0);
+
+  // Generate session ID on client only to avoid hydration mismatch
+  useEffect(() => {
+    setSessionId(generateSessionId());
+  }, []);
 
   const handleNewSession = useCallback(async () => {
     // Best-effort cleanup of the current session's side effects
